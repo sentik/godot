@@ -3,8 +3,9 @@
 
 #include "Dither.hpp"
 #include "Math.hpp"
-#ifdef __SSE4_1__
-#  ifdef _MSC_VER
+
+#if defined(__SSE4_1__) || defined(__AVX2__)
+#ifdef _MSC_VER
 #    include <intrin.h>
 #    include <Windows.h>
 #  else
@@ -12,9 +13,8 @@
 #  endif
 #endif
 
-#ifdef __AVX2__
-void DitherAvx2( uint8_t* data, __m128i px0, __m128i px1, __m128i px2, __m128i px3 )
-{
+#if defined(__AVX2__)
+void DitherAvx2(uint8_t *data, __m128i px0, __m128i px1, __m128i px2, __m128i px3) {
     static constexpr uint8_t a31[] = { 0, 0, 0, 1, 2, 0, 4, 0, 0, 2, 0, 0, 4, 0, 3, 0 };
     static constexpr uint8_t a63[] = { 0, 0, 0, 0, 1, 0, 2, 0, 0, 1, 0, 0, 2, 0, 1, 0 };
     static constexpr uint8_t s31[] = { 5, 0, 4, 0, 0, 2, 0, 1, 3, 0, 4, 0, 0, 0, 0, 2 };

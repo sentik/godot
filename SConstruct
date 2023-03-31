@@ -172,10 +172,11 @@ opts.Add(
         "optimize", "Optimization level", "speed_trace", ("none", "custom", "debug", "speed", "speed_trace", "size")
     )
 )
-opts.Add(BoolVariable("debug_symbols", "Build with debugging symbols", False))
-opts.Add(BoolVariable("separate_debug_symbols", "Extract debugging symbols to a separate file", False))
+opts.Add(BoolVariable("debug_symbols", "Build with debugging symbols", True))
+opts.Add(BoolVariable("separate_debug_symbols", "Extract debugging symbols to a separate file", True))
 opts.Add(EnumVariable("lto", "Link-time optimization (production builds)", "none", ("none", "auto", "thin", "full")))
 opts.Add(BoolVariable("production", "Set defaults to build Godot for use in production", False))
+opts.Add(EnumVariable("use_simd", "Enable optimizations using simd instructions", "avx2", ("sse2", "avx", "avx2", "avx512")))
 
 # Components
 opts.Add(BoolVariable("deprecated", "Enable compatibility code for deprecated and removed features", True))
@@ -546,6 +547,25 @@ if selected_platform in platform_list:
     # "custom" means do nothing and let users set their own optimization flags.
     # Needs to happen after configure to have `env.msvc` defined.
     if env.msvc:
+    
+        if env["use_simd"] == "avx" or env["use_simd"] == "avx2" or env["use_simd"] == "avx512":
+            env.Append(CPPDEFINES=["__SSE4_1__", "__SSE4_2__", "__SSE3__", "__SSSE3__"])
+    
+        if env["use_simd"] == "sse2":
+            env.Append(CCFLAGS=["/arch:SSE2"])
+            env.Append(CPPDEFINES=["EMBREE_TARGET_SSE2"])
+        elif env["use_simd"] == "avx":
+            env.Append(CCFLAGS=["/arch:AVX"])
+            env.Append(CPPDEFINES=["EMBREE_TARGET_AVX", "EMBREE_TARGET_SSE42", "EMBREE_TARGET_SSE2"])
+        elif env["use_simd"] == "avx2":
+            env.Append(CCFLAGS=["/arch:AVX2"])
+            env.Append(CPPDEFINES=["EMBREE_TARGET_AVX", "EMBREE_TARGET_AVX2", "EMBREE_TARGET_SSE42", "EMBREE_TARGET_SSE2"])
+        elif env["use_simd"] == "avx512":
+            env.Append(CCFLAGS=["/arch:AVX512"])
+            env.Append(CPPDEFINES=["EMBREE_TARGET_AVX", "EMBREE_TARGET_AVX2", "EMBREE_TARGET_AVX512", "EMBREE_TARGET_SSE42", "EMBREE_TARGET_SSE2"])
+
+        env.Append(LINKFLAGS=["/CGTHREADS:8"])
+
         if env["debug_symbols"]:
             env.Append(CCFLAGS=["/Zi", "/FS"])
             env.Append(LINKFLAGS=["/DEBUG:FULL"])
@@ -602,7 +622,7 @@ if selected_platform in platform_list:
     else:
         # MSVC doesn't have clear C standard support, /std only covers C++.
         # We apply it to CCFLAGS (both C and C++ code) in case it impacts C features.
-        env.Prepend(CCFLAGS=["/std:c++17"])
+        env.Prepend(CCFLAGS=["/std:c++17", "/MP 64"])
 
     # Enforce our minimal compiler version requirements
     cc_version = methods.get_compiler_version(env) or {

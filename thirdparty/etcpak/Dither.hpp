@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __AVX2__
+#if defined(__AVX2__)
 #  ifdef _MSC_VER
 #    include <intrin.h>
 #  else
@@ -14,7 +14,7 @@
 
 void Dither( uint8_t* data );
 
-#ifdef __AVX2__
+#if defined(__AVX2__)
 void DitherAvx2( uint8_t* data, __m128i px0, __m128i px1, __m128i px2, __m128i px3 );
 #endif
 

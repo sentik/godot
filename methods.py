@@ -59,7 +59,7 @@ def force_optimization_on_debug(self):
         self["CCFLAGS"] = [x for x in self["CCFLAGS"] if not x.startswith("/O")]
         self["CFLAGS"] = [x for x in self["CFLAGS"] if not x.startswith("/O")]
         self["CXXFLAGS"] = [x for x in self["CXXFLAGS"] if not x.startswith("/O")]
-        self.AppendUnique(CCFLAGS=["/O2"])
+        self.AppendUnique(CCFLAGS=["/O2", "/MP 32", "/CGTHREADS:8"])
     else:
         self.AppendUnique(CCFLAGS=["-O3"])
 
