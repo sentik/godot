@@ -548,6 +548,9 @@ if selected_platform in platform_list:
     # Needs to happen after configure to have `env.msvc` defined.
     if env.msvc:
     
+        env.Append(CCFLAGS=["/openmp:experimental"])
+
+    
         if env["use_simd"] == "avx" or env["use_simd"] == "avx2" or env["use_simd"] == "avx512":
             env.Append(CPPDEFINES=["__SSE4_1__", "__SSE4_2__", "__SSE3__", "__SSSE3__"])
     
@@ -564,7 +567,7 @@ if selected_platform in platform_list:
             env.Append(CCFLAGS=["/arch:AVX512"])
             env.Append(CPPDEFINES=["EMBREE_TARGET_AVX", "EMBREE_TARGET_AVX2", "EMBREE_TARGET_AVX512", "EMBREE_TARGET_SSE42", "EMBREE_TARGET_SSE2"])
 
-        env.Append(LINKFLAGS=["/CGTHREADS:8"])
+        env.Append(LINKFLAGS=["/cgthreads8"])
 
         #if env["debug_symbols"]:
         env.Append(CCFLAGS=["/Zi", "/FS"])

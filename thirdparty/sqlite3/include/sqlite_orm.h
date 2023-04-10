@@ -9687,7 +9687,7 @@ namespace sqlite_orm {
 
           protected:
             sqlite3* db = nullptr;
-            int _retain_count = 0;
+            std::atomic<int> _retain_count = 0;
         };
 
         struct connection_ref {
