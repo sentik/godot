@@ -142,6 +142,7 @@ public:
 	}
 };
 
+
 class EditorFileSystem : public Node {
 	GDCLASS(EditorFileSystem, Node);
 
@@ -170,7 +171,7 @@ class EditorFileSystem : public Node {
 	static void _thread_func(void *_userdata);
 
 	EditorFileSystemDirectory *new_filesystem = nullptr;
-
+	class EditorFileSystemDb *file_system_db = nullptr;
 	bool scanning = false;
 	bool importing = false;
 	bool first_scan = true;

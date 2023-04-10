@@ -8,6 +8,8 @@ import os
 import glob
 import editor_builders
 
+better_enums_thirdparty_dir = "#thirdparty/better-enums/"
+env.Append(CPPPATH=[better_enums_thirdparty_dir + "include"])
 
 def _make_doc_data_class_path(to_path):
     # NOTE: It is safe to generate this file here, since this is still executed serially
@@ -126,3 +128,9 @@ if env.editor_build:
 
     lib = env.add_library("editor", env.editor_sources)
     env.Prepend(LIBS=[lib])
+
+    sqlite3_thirdparty_dir = "#thirdparty/sqlite3/"
+    env.Append(CPPPATH=[sqlite3_thirdparty_dir + "include"])
+    env.Append(LIBPATH=[sqlite3_thirdparty_dir + "lib"])
+    env.Append(LINKFLAGS=["sqlite3.lib"])
+    env.Append(CPPDEFINES=["_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS"])

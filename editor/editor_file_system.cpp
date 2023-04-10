@@ -27,9 +27,11 @@
 /* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
+#pragma optimize("", off)
 
 #include "editor_file_system.h"
 
+#include "editor_file_system_db.h"
 #include "core/config/project_settings.h"
 #include "core/extension/gdextension_manager.h"
 #include "core/io/file_access.h"
@@ -361,166 +363,66 @@ bool EditorFileSystem::_test_for_reimport(const String &p_path, bool p_only_impo
 		return false;
 	}
 
-	if (!FileAccess::exists(p_path + ".import")) {
+	const auto editor_asset = file_system_db->asset_get(p_path);
+	if (!editor_asset.has_value()) {
 		return true;
 	}
 
+	if (editor_asset->importer_name == "keep") {
+		return false; //keep mode, do not reimport
+	}
+	
 	if (!ResourceFormatImporter::get_singleton()->are_import_settings_valid(p_path)) {
 		//reimport settings are not valid, reimport
 		return true;
 	}
 
-	Error err;
-	Ref<FileAccess> f = FileAccess::open(p_path + ".import", FileAccess::READ, &err);
 
-	if (f.is_null()) { //no import file, do reimport
-		return true;
-	}
-
-	VariantParser::StreamFile stream;
-	stream.f = f;
-
-	String assign;
-	Variant value;
-	VariantParser::Tag next_tag;
-
-	int lines = 0;
-	String error_text;
-
-	List<String> to_check;
-
-	String importer_name;
-	String source_file = "";
-	String source_md5 = "";
-	Vector<String> dest_files;
-	String dest_md5 = "";
-	int version = 0;
-	bool found_uid = false;
-
-	while (true) {
-		assign = Variant();
-		next_tag.fields.clear();
-		next_tag.name = String();
-
-		err = VariantParser::parse_tag_assign_eof(&stream, lines, error_text, next_tag, assign, value, nullptr, true);
-		if (err == ERR_FILE_EOF) {
-			break;
-		} else if (err != OK) {
-			ERR_PRINT("ResourceFormatImporter::load - '" + p_path + ".import:" + itos(lines) + "' error '" + error_text + "'.");
-			return false; //parse error, try reimport manually (Avoid reimport loop on broken file)
-		}
-
-		if (!assign.is_empty()) {
-			if (assign.begins_with("path")) {
-				to_check.push_back(value);
-			} else if (assign == "files") {
-				Array fa = value;
-				for (int i = 0; i < fa.size(); i++) {
-					to_check.push_back(fa[i]);
-				}
-			} else if (assign == "importer_version") {
-				version = value;
-			} else if (assign == "importer") {
-				importer_name = value;
-			} else if (assign == "uid") {
-				found_uid = true;
-			} else if (!p_only_imported_files) {
-				if (assign == "source_file") {
-					source_file = value;
-				} else if (assign == "dest_files") {
-					dest_files = value;
-				}
-			}
-
-		} else if (next_tag.name != "remap" && next_tag.name != "deps") {
-			break;
-		}
-	}
-
-	if (importer_name == "keep") {
-		return false; //keep mode, do not reimport
-	}
-
-	if (!found_uid) {
-		return true; //UID not found, old format, reimport.
-	}
-
-	Ref<ResourceImporter> importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(importer_name);
-
+	Ref<ResourceImporter> importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(editor_asset->importer_name);
 	if (importer.is_null()) {
 		return true; // the importer has possibly changed, try to reimport.
 	}
 
-	if (importer->get_format_version() > version) {
+	if (importer->get_format_version() > editor_asset->importer_version) {
 		return true; // version changed, reimport
 	}
 
-	// Read the md5's from a separate file (so the import parameters aren't dependent on the file version
-	String base_path = ResourceFormatImporter::get_singleton()->get_import_base_path(p_path);
-	Ref<FileAccess> md5s = FileAccess::open(base_path + ".md5", FileAccess::READ, &err);
-	if (md5s.is_null()) { // No md5's stored for this resource
-		return true;
-	}
+	const auto editor_asset_files = file_system_db->asset_files_get(editor_asset->asset_id);
 
-	VariantParser::StreamFile md5_stream;
-	md5_stream.f = md5s;
-
-	while (true) {
-		assign = Variant();
-		next_tag.fields.clear();
-		next_tag.name = String();
-
-		err = VariantParser::parse_tag_assign_eof(&md5_stream, lines, error_text, next_tag, assign, value, nullptr, true);
-
-		if (err == ERR_FILE_EOF) {
-			break;
-		} else if (err != OK) {
-			ERR_PRINT("ResourceFormatImporter::load - '" + p_path + ".import.md5:" + itos(lines) + "' error '" + error_text + "'.");
-			return false; // parse error
-		}
-		if (!assign.is_empty()) {
-			if (!p_only_imported_files) {
-				if (assign == "source_md5") {
-					source_md5 = value;
-				} else if (assign == "dest_md5") {
-					dest_md5 = value;
-				}
-			}
-		}
-	}
+	List<String> to_check;
+	Vector<String> dest_files;
 
 	//imported files are gone, reimport
-	for (const String &E : to_check) {
-		if (!FileAccess::exists(E)) {
+	for (const auto &file : editor_asset_files) {
+		if (!FileAccess::exists(file.path)) {
 			return true;
 		}
 	}
 
 	//check source md5 matching
 	if (!p_only_imported_files) {
-		if (!source_file.is_empty() && source_file != p_path) {
+		if (!editor_asset->source_file.is_empty() && editor_asset->source_file != p_path) {
 			return true; //file was moved, reimport
 		}
-
-		if (source_md5.is_empty()) {
+	
+		if (editor_asset->source_md5.is_empty()) {
 			return true; //lacks md5, so just reimport
 		}
 
-		String md5 = FileAccess::get_md5(p_path);
-		if (md5 != source_md5) {
+		if (auto md5 = FileAccess::get_md5(p_path); md5 != editor_asset->source_md5) {
 			return true;
 		}
 
-		if (dest_files.size() && !dest_md5.is_empty()) {
-			md5 = FileAccess::get_multiple_md5(dest_files);
-			if (md5 != dest_md5) {
+		for (const auto &file : editor_asset_files)
+		{
+			if (auto md5 = FileAccess::get_md5(file.path); md5 != file.hash) {
 				return true;
 			}
 		}
 	}
-
 	return false; //nothing changed
 }
+
 
 bool EditorFileSystem::_scan_import_support(Vector<String> reimports) {
 	if (import_support_queries.size() == 0) {
@@ -648,7 +550,8 @@ bool EditorFileSystem::_update_scan_actions() {
 					//must not reimport, all was good
 					//update modified times, to avoid reimport
 					ia.dir->files[idx]->modified_time = FileAccess::get_modified_time(full_path);
-					ia.dir->files[idx]->import_modified_time = FileAccess::get_modified_time(full_path + ".import");
+					//ia.dir->files[idx]->import_modified_time = FileAccess::get_modified_time(full_path + ".import");
+					ia.dir->files[idx]->import_modified_time = ia.dir->files[idx]->modified_time;
 				}
 
 				fs_changed = true;
@@ -1884,7 +1787,7 @@ Error EditorFileSystem::_reimport_group(const String &p_group_file, const Vector
 
 		//update modified times, to avoid reimport
 		fs->files[cpos]->modified_time = FileAccess::get_modified_time(file);
-		fs->files[cpos]->import_modified_time = FileAccess::get_modified_time(file + ".import");
+		fs->files[cpos]->import_modified_time = FileAccess::get_modified_time(file);
 		fs->files[cpos]->deps = _get_dependencies(file);
 		fs->files[cpos]->uid = uid;
 		fs->files[cpos]->type = importer->get_resource_type();
@@ -1932,64 +1835,30 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 		importer_name = p_custom_importer;
 	}
 
-	ResourceUID::ID uid = ResourceUID::INVALID_ID;
-	Variant generator_parameters;
-	if (p_generator_parameters) {
-		generator_parameters = *p_generator_parameters;
+	auto editor_asset = file_system_db->asset_get(p_file).value_or(EditorAsset());
+	if (editor_asset.has_value()) {
+		importer_name = editor_asset.importer_name;
+	} else {
+		editor_asset.uid = ResourceUID::get_singleton()->create_id();
+		editor_asset.import_modified_time = std::time(nullptr);
 	}
-
-	if (FileAccess::exists(p_file + ".import")) {
-		//use existing
-		Ref<ConfigFile> cf;
-		cf.instantiate();
-		Error err = cf->load(p_file + ".import");
-		if (err == OK) {
-			if (cf->has_section("params")) {
-				List<String> sk;
-				cf->get_section_keys("params", &sk);
-				for (const String &E : sk) {
-					if (!params.has(E)) {
-						params[E] = cf->get_value("params", E);
-					}
-				}
-			}
-
-			if (cf->has_section("remap")) {
-				if (p_custom_importer.is_empty()) {
-					importer_name = cf->get_value("remap", "importer");
-				}
-
-				if (cf->has_section_key("remap", "uid")) {
-					String uidt = cf->get_value("remap", "uid");
-					uid = ResourceUID::get_singleton()->text_to_id(uidt);
-				}
-
-				if (!p_generator_parameters) {
-					if (cf->has_section_key("remap", "generator_parameters")) {
-						generator_parameters = cf->get_value("remap", "generator_parameters");
-					}
-				}
-			}
-		}
-	}
-
-	if (importer_name == "keep") {
+		
+	if (editor_asset.has_value() && editor_asset.importer_name == "keep") {
 		//keep files, do nothing.
 		fs->files[cpos]->modified_time = FileAccess::get_modified_time(p_file);
-		fs->files[cpos]->import_modified_time = FileAccess::get_modified_time(p_file + ".import");
+		fs->files[cpos]->import_modified_time = editor_asset.import_modified_time;
 		fs->files[cpos]->deps.clear();
 		fs->files[cpos]->type = "";
 		fs->files[cpos]->import_valid = false;
 		EditorResourcePreview::get_singleton()->check_for_invalidation(p_file);
 		return OK;
 	}
+
+
 	Ref<ResourceImporter> importer;
 	bool load_default = false;
 	//find the importer
-	if (!importer_name.is_empty()) {
-		importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(importer_name);
-	}
-
+	importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(importer_name);
 	if (importer.is_null()) {
 		//not found by name, find by extension
 		importer = ResourceFormatImporter::get_singleton()->get_importer_by_extension(p_file.get_extension());
@@ -2009,51 +1878,51 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 		}
 	}
 
-	if (load_default && ProjectSettings::get_singleton()->has_setting("importer_defaults/" + importer->get_importer_name())) {
-		//use defaults if exist
-		Dictionary d = GLOBAL_GET("importer_defaults/" + importer->get_importer_name());
-		List<Variant> v;
-		d.get_key_list(&v);
+	{
+		const auto importer_defaults_section_name = "importer_defaults/" + importer->get_importer_name();
+		if (load_default && ProjectSettings::get_singleton()->has_setting(importer_defaults_section_name)) {
+			//use defaults if exist
+			Dictionary d = GLOBAL_GET(importer_defaults_section_name);
+			List<Variant> v;
+			d.get_key_list(&v);
 
-		for (const Variant &E : v) {
-			params[E] = d[E];
+			for (const Variant &E : v) {
+				params[E] = d[E];
+			}
 		}
 	}
-
 	//finally, perform import!!
 	String base_path = ResourceFormatImporter::get_singleton()->get_import_base_path(p_file);
 
 	List<String> import_variants;
 	List<String> gen_files;
 	Variant meta;
-	Error err = importer->import(p_file, base_path, params, &import_variants, &gen_files, &meta);
 
+	Error err = importer->import(p_file, base_path, params, &import_variants, &gen_files, &meta);
 	ERR_FAIL_COND_V_MSG(err != OK, ERR_FILE_UNRECOGNIZED, "Error importing '" + p_file + "'.");
 
+
+
 	//as import is complete, save the .import file
-
-	Vector<String> dest_paths;
 	{
-		Ref<FileAccess> f = FileAccess::open(p_file + ".import", FileAccess::WRITE);
-		ERR_FAIL_COND_V_MSG(f.is_null(), ERR_FILE_CANT_OPEN, "Cannot open file from path '" + p_file + ".import'.");
+		editor_asset.file_path = p_file;
+		editor_asset.importer_name = importer->get_importer_name();
+		editor_asset.importer_version = importer->get_format_version();
+		editor_asset.resource_type = importer->get_resource_type();
+		editor_asset.is_valid = err == OK;
+		editor_asset.source_file = Variant(p_file).get_construct_string();
+		editor_asset.source_md5 = FileAccess::get_md5(p_file);
 
-		//write manually, as order matters ([remap] has to go first for performance).
-		f->store_line("[remap]");
-		f->store_line("");
-		f->store_line("importer=\"" + importer->get_importer_name() + "\"");
-		int version = importer->get_format_version();
-		if (version > 0) {
-			f->store_line("importer_version=" + itos(version));
-		}
-		if (!importer->get_resource_type().is_empty()) {
-			f->store_line("type=\"" + importer->get_resource_type() + "\"");
+		if (p_generator_parameters) {
+			editor_asset.generator_parameters = *p_generator_parameters;
 		}
 
-		if (uid == ResourceUID::INVALID_ID) {
-			uid = ResourceUID::get_singleton()->create_id();
+		if (meta != Variant()) {
+			editor_asset.metadata = meta.get_construct_string();
 		}
 
-		f->store_line("uid=\"" + ResourceUID::get_singleton()->id_to_text(uid) + "\""); //store in readable format
+		std::vector<EditorAssetParam> editor_asset_params;
+		std::vector<EditorAssetFile> editor_asset_files;
 
 		if (err == OK) {
 			if (importer->get_save_extension().is_empty()) {
@@ -2061,92 +1930,60 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 			} else if (import_variants.size()) {
 				//import with variants
 				for (const String &E : import_variants) {
-					String path = base_path.c_escape() + "." + E + "." + importer->get_save_extension();
-
-					f->store_line("path." + E + "=\"" + path + "\"");
-					dest_paths.push_back(path);
+					EditorAssetFile editor_asset_file;
+					editor_asset_file.file_type = EditorAssetFileType::DestFile;
+					editor_asset_file.asset_id = editor_asset.asset_id;
+					editor_asset_file.path = base_path + "." + E + "." + importer->get_save_extension();
+					editor_asset_file.hash = FileAccess::get_md5(editor_asset_file.path);
+					editor_asset_file.variant_name = E;
+					editor_asset_files.push_back(editor_asset_file);
 				}
 			} else {
-				String path = base_path + "." + importer->get_save_extension();
-				f->store_line("path=\"" + path + "\"");
-				dest_paths.push_back(path);
+				EditorAssetFile editor_asset_file;
+				editor_asset_file.file_type = EditorAssetFileType::DestFile;
+				editor_asset_file.asset_id = editor_asset.asset_id;
+				editor_asset_file.path = base_path + "." + importer->get_save_extension();
+				editor_asset_file.hash = FileAccess::get_md5(editor_asset_file.path);
+				editor_asset_files.push_back(editor_asset_file);
 			}
+		} 
 
-		} else {
-			f->store_line("valid=false");
+		for (const String &E : gen_files) {
+			EditorAssetFile editor_asset_file;
+			editor_asset_file.file_type = EditorAssetFileType::GenFile;
+			editor_asset_file.asset_id = editor_asset.asset_id;
+			editor_asset_file.path = E;
+			editor_asset_file.hash = FileAccess::get_md5(editor_asset_file.path);
+			editor_asset_files.push_back(editor_asset_file);
 		}
-
-		if (meta != Variant()) {
-			f->store_line("metadata=" + meta.get_construct_string());
-		}
-
-		if (generator_parameters != Variant()) {
-			f->store_line("generator_parameters=" + generator_parameters.get_construct_string());
-		}
-
-		f->store_line("");
-
-		f->store_line("[deps]\n");
-
-		if (gen_files.size()) {
-			Array genf;
-			for (const String &E : gen_files) {
-				genf.push_back(E);
-				dest_paths.push_back(E);
-			}
-
-			String value;
-			VariantWriter::write_to_string(genf, value);
-			f->store_line("files=" + value);
-			f->store_line("");
-		}
-
-		f->store_line("source_file=" + Variant(p_file).get_construct_string());
-
-		if (dest_paths.size()) {
-			Array dp;
-			for (int i = 0; i < dest_paths.size(); i++) {
-				dp.push_back(dest_paths[i]);
-			}
-			f->store_line("dest_files=" + Variant(dp).get_construct_string() + "\n");
-		}
-
-		f->store_line("[params]");
-		f->store_line("");
 
 		//store options in provided order, to avoid file changing. Order is also important because first match is accepted first.
+		editor_asset_params.reserve(opts.size());
 
 		for (const ResourceImporter::ImportOption &E : opts) {
-			String base = E.option.name;
-			String value;
-			VariantWriter::write_to_string(params[base], value);
-			f->store_line(base + "=" + value);
+			EditorAssetParam param;
+			param.key = E.option.name;
+			param.value = params[param.key];
+			editor_asset_params.push_back(param);
 		}
+
+		file_system_db->asset_add_or_update(editor_asset);
+		file_system_db->asset_files_replace(editor_asset.asset_id, editor_asset_files);
+		file_system_db->asset_params_replace(editor_asset.asset_id, editor_asset_params);
 	}
-
-	// Store the md5's of the various files. These are stored separately so that the .import files can be version controlled.
-	{
-		Ref<FileAccess> md5s = FileAccess::open(base_path + ".md5", FileAccess::WRITE);
-		ERR_FAIL_COND_V_MSG(md5s.is_null(), ERR_FILE_CANT_OPEN, "Cannot open MD5 file '" + base_path + ".md5'.");
-
-		md5s->store_line("source_md5=\"" + FileAccess::get_md5(p_file) + "\"");
-		if (dest_paths.size()) {
-			md5s->store_line("dest_md5=\"" + FileAccess::get_multiple_md5(dest_paths) + "\"\n");
-		}
-	}
-
+	
 	//update modified times, to avoid reimport
 	fs->files[cpos]->modified_time = FileAccess::get_modified_time(p_file);
-	fs->files[cpos]->import_modified_time = FileAccess::get_modified_time(p_file + ".import");
+	fs->files[cpos]->import_modified_time = editor_asset.import_modified_time;
 	fs->files[cpos]->deps = _get_dependencies(p_file);
 	fs->files[cpos]->type = importer->get_resource_type();
-	fs->files[cpos]->uid = uid;
+	fs->files[cpos]->uid = editor_asset.uid;
 	fs->files[cpos]->import_valid = fs->files[cpos]->type == "TextFile" ? true : ResourceLoader::is_import_valid(p_file);
 
-	if (ResourceUID::get_singleton()->has_id(uid)) {
-		ResourceUID::get_singleton()->set_id(uid, p_file);
+	if (ResourceUID::get_singleton()->has_id(editor_asset.uid)) {
+		ResourceUID::get_singleton()->set_id(editor_asset.uid, p_file);
 	} else {
-		ResourceUID::get_singleton()->add_id(uid, p_file);
+		ResourceUID::get_singleton()->add_id(editor_asset.uid, p_file);
 	}
 
 	//if file is currently up, maybe the source it was loaded from changed, so import math must be updated for it
@@ -2574,7 +2411,7 @@ EditorFileSystem::EditorFileSystem() {
 	filesystem->parent = nullptr;
 
 	new_filesystem = nullptr;
-
+	file_system_db = memnew(EditorFileSystemDb);
 	// This should probably also work on Unix and use the string it returns for FAT32 or exFAT
 	Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
 	using_fat32_or_exfat = (da->get_filesystem_type() == "FAT32" || da->get_filesystem_type() == "exFAT");

@@ -385,6 +385,10 @@ void ResourceFormatImporter::get_dependencies(const String &p_path, List<String>
 }
 
 Ref<ResourceImporter> ResourceFormatImporter::get_importer_by_name(const String &p_name) const {
+	if (p_name.is_empty()) {
+		return Ref<ResourceImporter>();
+	}
+
 	for (int i = 0; i < importers.size(); i++) {
 		if (importers[i]->get_importer_name() == p_name) {
 			return importers[i];
