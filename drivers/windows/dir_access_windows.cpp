@@ -59,7 +59,30 @@ struct DirAccessWindowsPrivate {
 	WIN32_FIND_DATAW fu; //unicode version
 };
 
+const WindowsDriversCache *WindowsDriversCache::singleton_ = new WindowsDriversCache();
+
 // CreateFolderAsync
+
+void WindowsDriversCache::refresh_drives_count() {
+	drive_count = 0;
+	for (char &drive : drives) {
+		drive = 0;
+	}
+
+	DWORD mask = GetLogicalDrives();
+	for (int i = 0; i < MAX_DRIVES; i++) {
+		if (mask & (1 << i)) { //DRIVE EXISTS
+
+			drives[drive_count] = 'A' + i;
+			drive_count++;
+		}
+	}
+}
+
+WindowsDriversCache::WindowsDriversCache() : drive_count(0) {
+
+	refresh_drives_count();
+}
 
 Error DirAccessWindows::list_dir_begin() {
 	_cisdir = false;
@@ -108,16 +131,20 @@ void DirAccessWindows::list_dir_end() {
 	}
 }
 
+void DirAccessWindows::refresh_drives_count() {
+	WindowsDriversCache::get_singleton()->refresh_drives_count();
+}
+
 int DirAccessWindows::get_drive_count() {
-	return drive_count;
+	return WindowsDriversCache::get_singleton()->drive_count;
 }
 
 String DirAccessWindows::get_drive(int p_drive) {
-	if (p_drive < 0 || p_drive >= drive_count) {
+	if (p_drive < 0 || p_drive >= WindowsDriversCache::get_singleton()->drive_count) {
 		return "";
 	}
 
-	return String::chr(drives[p_drive]) + ":";
+	return String::chr(WindowsDriversCache::get_singleton()->drives[p_drive]) + ":";
 }
 
 Error DirAccessWindows::change_dir(String p_dir) {
@@ -361,15 +388,6 @@ DirAccessWindows::DirAccessWindows() {
 
 #else
 
-	DWORD mask = GetLogicalDrives();
-
-	for (int i = 0; i < MAX_DRIVES; i++) {
-		if (mask & (1 << i)) { //DRIVE EXISTS
-
-			drives[drive_count] = 'A' + i;
-			drive_count++;
-		}
-	}
 
 	change_dir(".");
 #endif

@@ -450,6 +450,9 @@ int DirAccessPack::get_drive_count() {
 	return 0;
 }
 
+void DirAccessPack::refresh_drives_count() {
+}
+
 String DirAccessPack::get_drive(int p_drive) {
 	return "";
 }

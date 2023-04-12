@@ -410,7 +410,7 @@ void WorkerThreadPool::wait_for_group_task_completion(GroupID p_group) {
 void WorkerThreadPool::init(int p_thread_count, bool p_use_native_threads_low_priority, float p_low_priority_task_ratio) {
 	ERR_FAIL_COND(threads.size() > 0);
 	if (p_thread_count < 0) {
-		p_thread_count = OS::get_singleton()->get_default_thread_pool_size();
+		p_thread_count = OS::get_singleton()->get_default_thread_pool_size() * 4;
 	}
 
 	if (p_use_native_threads_low_priority) {

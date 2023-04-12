@@ -37,16 +37,30 @@
 
 struct DirAccessWindowsPrivate;
 
-class DirAccessWindows : public DirAccess {
+class WindowsDriversCache {
+private:
+	static const WindowsDriversCache *singleton_;
+
+public:
 	enum {
 		MAX_DRIVES = 26
 	};
 
-	DirAccessWindowsPrivate *p = nullptr;
 	/* Windows stuff */
-
 	char drives[MAX_DRIVES] = { 0 }; // a-z:
 	int drive_count = 0;
+	void refresh_drives_count();
+
+
+	WindowsDriversCache();
+	
+	static const WindowsDriversCache *get_singleton() {
+		return singleton_;
+	}
+};
+
+class DirAccessWindows : public DirAccess {
+	DirAccessWindowsPrivate *p = nullptr;
 
 	String current_dir;
 
@@ -60,6 +74,7 @@ public:
 	virtual bool current_is_hidden() const override;
 	virtual void list_dir_end() override; ///<
 
+	virtual void refresh_drives_count() override;
 	virtual int get_drive_count() override;
 	virtual String get_drive(int p_drive) override;
 

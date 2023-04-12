@@ -83,6 +83,7 @@ public:
 
 	virtual void list_dir_end() = 0; ///<
 
+	virtual void refresh_drives_count() = 0;
 	virtual int get_drive_count() = 0;
 	virtual String get_drive(int p_drive) = 0;
 	virtual int get_current_drive();

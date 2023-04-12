@@ -226,6 +226,7 @@ public:
 	virtual void list_dir_end() override;
 
 	virtual int get_drive_count() override;
+	virtual void refresh_drives_count() override;
 	virtual String get_drive(int p_drive) override;
 
 	virtual Error change_dir(String p_dir) override;
