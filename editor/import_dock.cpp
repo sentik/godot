@@ -30,6 +30,7 @@
 
 #include "import_dock.h"
 
+#include "editor_file_system_db.h"
 #include "core/config/project_settings.h"
 #include "editor/editor_node.h"
 #include "editor/editor_resource_preview.h"
@@ -97,23 +98,19 @@ public:
 ImportDock *ImportDock::singleton = nullptr;
 
 void ImportDock::set_edit_path(const String &p_path) {
-	Ref<ConfigFile> config;
-	config.instantiate();
-	Error err = config->load(p_path + ".import");
-	if (err != OK) {
+	const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path);
+	if (!editor_asset.has_value()) {
 		clear();
 		return;
 	}
 
-	String importer_name = config->get_value("remap", "importer");
-
-	params->importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(importer_name);
-
+	params->importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(editor_asset->importer_name);
 	params->paths.clear();
 	params->paths.push_back(p_path);
 	params->base_options_path = p_path;
 
-	_update_options(p_path, config);
+	const auto editor_asset_params = EditorFileSystemDb::get_singleton()->asset_params_get(editor_asset->asset_id);
+	_update_options(p_path, editor_asset_params);
 
 	List<Ref<ResourceImporter>> importers;
 	ResourceFormatImporter::get_singleton()->get_importers_for_extension(p_path.get_extension(), &importers);
@@ -130,12 +127,12 @@ void ImportDock::set_edit_path(const String &p_path) {
 	for (const Pair<String, String> &E : importer_names) {
 		import_as->add_item(E.first);
 		import_as->set_item_metadata(-1, E.second);
-		if (E.second == importer_name) {
+		if (E.second == editor_asset->importer_name) {
 			import_as->select(import_as->get_item_count() - 1);
 		}
 	}
 
-	_add_keep_import_option(importer_name);
+	_add_keep_import_option(editor_asset->importer_name);
 
 	import->set_disabled(false);
 	_set_dirty(false);
@@ -156,7 +153,8 @@ void ImportDock::_add_keep_import_option(const String &p_importer_name) {
 	}
 }
 
-void ImportDock::_update_options(const String &p_path, const Ref<ConfigFile> &p_config) {
+void ImportDock::_update_options(const String &p_path, const std::vector<EditorAssetParam> &editor_asset_params)
+{
 	List<ResourceImporter::ImportOption> options;
 
 	if (params->importer.is_valid()) {
@@ -171,10 +169,12 @@ void ImportDock::_update_options(const String &p_path, const Ref<ConfigFile> &p_
 
 	for (const ResourceImporter::ImportOption &E : options) {
 		params->properties.push_back(E.option);
-		if (p_config.is_valid() && p_config->has_section_key("params", E.option.name)) {
-			params->values[E.option.name] = p_config->get_value("params", E.option.name);
-		} else {
-			params->values[E.option.name] = E.default_value;
+		for (const auto& param  : editor_asset_params) {
+			if (param.key == E.option.name) {
+				params->values[E.option.name] = param.value;
+			} else {
+				params->values[E.option.name] = E.default_value;
+			}
 		}
 	}
 
@@ -198,40 +198,33 @@ void ImportDock::set_edit_multiple_paths(const Vector<String> &p_paths) {
 	HashSet<String> extensions;
 
 	for (int i = 0; i < p_paths.size(); i++) {
-		Ref<ConfigFile> config;
-		config.instantiate();
 		extensions.insert(p_paths[i].get_extension());
-		Error err = config->load(p_paths[i] + ".import");
-		ERR_CONTINUE(err != OK);
 
+		const auto& path = p_paths[i];
+		const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(path);
+		ERR_CONTINUE(!editor_asset.has_value());
+
+		const auto editor_asset_params = EditorFileSystemDb::get_singleton()->asset_params_get(editor_asset->asset_id);
 		if (i == 0) {
-			params->importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(config->get_value("remap", "importer"));
+			params->importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(editor_asset->importer_name);
 			if (params->importer.is_null()) {
 				clear();
 				return;
 			}
 		}
-
-		if (!config->has_section("params")) {
-			continue;
-		}
-
-		List<String> keys;
-		config->get_section_keys("params", &keys);
-
-		for (const String &E : keys) {
-			if (!value_frequency.has(E)) {
-				value_frequency[E] = Dictionary();
+		
+		for (const auto &param : editor_asset_params) {
+			if (!value_frequency.has(param.key)) {
+				value_frequency[param.key] = Dictionary();
 			}
-
-			Variant value = config->get_value("params", E);
-
-			if (value_frequency[E].has(value)) {
-				value_frequency[E][value] = int(value_frequency[E][value]) + 1;
+			
+			if (value_frequency[param.key].has(param.value)) {
+				value_frequency[param.key][param.value] = int(value_frequency[param.key][param.value]) + 1;
 			} else {
-				value_frequency[E][value] = 1;
+				value_frequency[param.key][param.value] = 1;
 			}
 		}
+
 	}
 
 	ERR_FAIL_COND(params->importer.is_null());
@@ -347,22 +340,20 @@ void ImportDock::_importer_selected(int i_idx) {
 	String name = import_as->get_selected_metadata();
 	if (name == "keep") {
 		params->importer.unref();
-		_update_options(params->base_options_path, Ref<ConfigFile>());
+		_update_options(params->base_options_path, {});
 	} else {
 		Ref<ResourceImporter> importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(name);
 		ERR_FAIL_COND(importer.is_null());
 
 		params->importer = importer;
-		Ref<ConfigFile> config;
 		if (params->paths.size()) {
-			String path = params->paths[0];
-			config.instantiate();
-			Error err = config->load(path + ".import");
-			if (err != OK) {
-				config.unref();
+			String p_path = params->paths[0];
+			const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path);
+			if (editor_asset.has_value()) {
+				const auto editor_asset_params = EditorFileSystemDb::get_singleton()->asset_params_get(editor_asset->asset_id);
+				_update_options(params->base_options_path, editor_asset_params);
 			}
 		}
-		_update_options(params->base_options_path, config);
 	}
 }
 
@@ -469,12 +460,11 @@ void ImportDock::_reimport_attempt() {
 		importer_name = "keep";
 	}
 	for (int i = 0; i < params->paths.size(); i++) {
-		Ref<ConfigFile> config;
-		config.instantiate();
-		Error err = config->load(params->paths[i] + ".import");
-		ERR_CONTINUE(err != OK);
+		const auto p_path = params->paths[i]; 
+		const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path);
+		ERR_CONTINUE(!editor_asset.has_value());
 
-		String imported_with = config->get_value("remap", "importer");
+		String imported_with = editor_asset->importer_name;
 		if (imported_with != importer_name) {
 			need_restart = true;
 			if (_find_owners(EditorFileSystem::get_singleton()->get_filesystem(), params->paths[i])) {
@@ -506,30 +496,45 @@ void ImportDock::_advanced_options() {
 }
 void ImportDock::_reimport() {
 	for (int i = 0; i < params->paths.size(); i++) {
-		Ref<ConfigFile> config;
-		config.instantiate();
-		Error err = config->load(params->paths[i] + ".import");
-		ERR_CONTINUE(err != OK);
+		const auto& p_path = params->paths[i];
+		auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path).value_or(EditorAsset());
+		ERR_CONTINUE(!editor_asset.has_value());
 
+		std::vector<EditorAssetParam> editor_asset_params;
 		if (params->importer.is_valid()) {
 			String importer_name = params->importer->get_importer_name();
 
-			if (params->checking && config->get_value("remap", "importer") == params->importer->get_importer_name()) {
+			if (params->checking && editor_asset.importer_name == params->importer->get_importer_name()) {
+				editor_asset_params = EditorFileSystemDb::get_singleton()->asset_params_get(editor_asset.asset_id);
+
 				//update only what is edited (checkboxes) if the importer is the same
 				for (const PropertyInfo &E : params->properties) {
 					if (params->checked.has(E.name)) {
-						config->set_value("params", E.name, params->values[E.name]);
+						bool updated = false;
+						for (auto& param  : editor_asset_params) {
+							if (param.key == E.name) {
+								param.value = params->values[E.name];
+								updated = true;
+								break;
+							}
+						}
+
+						if (!updated) {
+							EditorAssetParam param;
+							param.key = E.name;
+							param.value = params->values[E.name];
+							editor_asset_params.push_back(param);
+						}
 					}
 				}
 			} else {
+				editor_asset.importer_name = importer_name;
 				//override entirely
-				config->set_value("remap", "importer", importer_name);
-				if (config->has_section("params")) {
-					config->erase_section("params");
-				}
-
-				for (const PropertyInfo &E : params->properties) {
-					config->set_value("params", E.name, params->values[E.name]);
+				for (const auto &E : params->properties) {
+					EditorAssetParam param;
+					param.key = E.name;
+					param.value = params->values[E.name];
+					editor_asset_params.push_back(param);
 				}
 			}
 
@@ -537,22 +542,20 @@ void ImportDock::_reimport() {
 			Ref<ResourceImporter> importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(importer_name);
 			ERR_CONTINUE(!importer.is_valid());
 			String group_file_property = importer->get_option_group_file();
-			if (!group_file_property.is_empty()) {
+			if (group_file_property.is_empty()) {
+				//clear group file if unused
+				editor_asset.group_file = "";
+			} else {
 				//can import from a group (as in, atlas)
 				ERR_CONTINUE(!params->values.has(group_file_property));
-				String group_file = params->values[group_file_property];
-				config->set_value("remap", "group_file", group_file);
-			} else {
-				config->set_value("remap", "group_file", Variant()); //clear group file if unused
+				editor_asset.group_file = params->values[group_file_property];
 			}
-
 		} else {
-			//set to no import
-			config->clear();
-			config->set_value("remap", "importer", "keep");
+			editor_asset.importer_name = "keep";
 		}
 
-		config->save(params->paths[i] + ".import");
+		EditorFileSystemDb::get_singleton()->asset_add_or_update(editor_asset);
+		EditorFileSystemDb::get_singleton()->asset_params_replace(editor_asset.asset_id, editor_asset_params);
 	}
 
 	EditorFileSystem::get_singleton()->reimport_files(params->paths);

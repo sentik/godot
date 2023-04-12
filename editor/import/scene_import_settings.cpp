@@ -33,6 +33,7 @@
 #include "core/config/project_settings.h"
 #include "editor/editor_file_dialog.h"
 #include "editor/editor_file_system.h"
+#include "editor/editor_file_system_db.h"
 #include "editor/editor_inspector.h"
 #include "editor/editor_node.h"
 #include "editor/editor_scale.h"
@@ -623,18 +624,15 @@ void SceneImportSettings::open_settings(const String &p_path, bool p_for_animati
 	{
 		base_subresource_settings.clear();
 
-		Ref<ConfigFile> config;
-		config.instantiate();
-		Error err = config->load(p_path + ".import");
-		if (err == OK) {
-			List<String> keys;
-			config->get_section_keys("params", &keys);
-			for (const String &E : keys) {
-				Variant value = config->get_value("params", E);
-				if (E == "_subresources") {
-					base_subresource_settings = value;
+		const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path);
+		if (editor_asset.has_value()) {
+			const auto editor_asset_params = EditorFileSystemDb::get_singleton()->asset_params_get(editor_asset->asset_id);
+			for (const auto& param : editor_asset_params) {
+				if (param.key == "_subresources") {
+					//	TODO: Implement parse 	 Dictionary from string
+					base_subresource_settings = Variant(param.value);
 				} else {
-					defaults[E] = value;
+					defaults[param.key] = param.value;
 				}
 			}
 		}

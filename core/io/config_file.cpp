@@ -218,6 +218,9 @@ Error ConfigFile::_internal_save(Ref<FileAccess> file) {
 		}
 	}
 
+	file->flush();
+	file->close();
+
 	return OK;
 }
 
@@ -272,7 +275,7 @@ Error ConfigFile::_internal_load(const String &p_path, Ref<FileAccess> f) {
 	stream.f = f;
 
 	Error err = _parse(p_path, &stream);
-
+	f->close();
 	return err;
 }
 

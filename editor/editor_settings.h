@@ -82,6 +82,8 @@ private:
 
 	HashMap<String, PropertyInfo> hints;
 	HashMap<String, VariantContainer> props;
+	Ref<ConfigFile> project_metadata;
+
 	int last_order;
 
 	Ref<Resource> clipboard;
@@ -148,6 +150,7 @@ public:
 	void set_resource_clipboard(const Ref<Resource> &p_resource) { clipboard = p_resource; }
 	Ref<Resource> get_resource_clipboard() const { return clipboard; }
 
+	void load_project_metadata();
 	void set_project_metadata(const String &p_section, const String &p_key, Variant p_data);
 	Variant get_project_metadata(const String &p_section, const String &p_key, Variant p_default) const;
 

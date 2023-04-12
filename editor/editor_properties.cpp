@@ -30,6 +30,7 @@
 
 #include "editor_properties.h"
 
+#include "editor_file_system_db.h"
 #include "core/config/project_settings.h"
 #include "core/core_string_names.h"
 #include "editor/create_dialog.h"
@@ -3733,7 +3734,7 @@ void EditorPropertyResource::_resource_selected(const Ref<Resource> &p_resource,
 		if (p_inspect) {
 			if (extensions.find(parent.get_extension()) && (!EditorNode::get_singleton()->get_edited_scene() || EditorNode::get_singleton()->get_edited_scene()->get_scene_file_path() != parent)) {
 				// If the resource belongs to another (non-imported) scene, edit it in that scene instead.
-				if (!FileAccess::exists(parent + ".import")) {
+				if (!EditorFileSystemDb::get_singleton()->asset_exist(parent)) {
 					EditorNode::get_singleton()->call_deferred("edit_foreign_resource", p_resource);
 					return;
 				}

@@ -92,6 +92,7 @@ struct EditorAsset {
 	String resource_name;
 	String source_md5;
 	String importer_name;
+	String group_file;
 	String resource_type;
 	ResourceUID::ID uid = ResourceUID::INVALID_ID;
 	int32_t importer_version;
@@ -105,7 +106,6 @@ struct EditorAsset {
 	String source_file;
 
 	//	params
-	String params;
 	String metadata;
 	bool has_value() const {
 		return asset_id != 0;
@@ -134,6 +134,7 @@ struct EditorAssetFile {
 	String path;
 	String hash;
 	EditorAssetFileType::_enumerated file_type = EditorAssetFileType::Unknown;
+	std::vector<char> blob;
 };
 
 
@@ -148,7 +149,7 @@ struct EditorAssetFile {
 			sqlite_orm::make_column("importer_name", &EditorAsset::importer_name),
 			sqlite_orm::make_column("importer_version", &EditorAsset::importer_version),
 			sqlite_orm::make_column("source_file", &EditorAsset::source_file),
-			sqlite_orm::make_column("params", &EditorAsset::params),
+			sqlite_orm::make_column("group_file", &EditorAsset::group_file),
 			sqlite_orm::make_column("modified_time", &EditorAsset::modified_time),
 			sqlite_orm::make_column("import_modified_time", &EditorAsset::import_modified_time));
 }
@@ -169,6 +170,7 @@ static auto get_editor_asset_files_table() {
 			sqlite_orm::make_column("path", &EditorAssetFile::path),
 			sqlite_orm::make_column("hash", &EditorAssetFile::hash),
 			sqlite_orm::make_column("file_type", &EditorAssetFile::file_type),
+			sqlite_orm::make_column("blob", &EditorAssetFile::blob),
 			sqlite_orm::foreign_key(&EditorAssetFile::asset_id).references(&EditorAsset::asset_id));
 }
 
@@ -181,8 +183,13 @@ static auto create_storage(const std::string &filePath) {
 }
 
 class EditorFileSystemDb : public Node {
+	private:
+	static EditorFileSystemDb *singleton;
 
-
+	public:
+	static EditorFileSystemDb* get_singleton() {
+		return singleton;
+	}
 
 public:
 	using Storage = std::result_of<decltype (&create_storage)(const std::string &)>::type;
@@ -190,12 +197,14 @@ public:
 
 	EditorFileSystemDb();
 
+	bool asset_exist(const String &p_path) const;
 	std::optional<EditorAsset> asset_get(const String &p_path) const;
 	std::vector<EditorAssetParam> asset_params_get(const int32_t &asset_id) const;
-	std::vector<EditorAssetFile> asset_files_get(const int32_t &asset_id) const;
+	std::vector<EditorAssetFile> asset_files_get(const int32_t &asset_id, const EditorAssetFileType::_enumerated &file_type = EditorAssetFileType::Unknown) const;
 
 	void asset_files_replace(const int32_t &asset_id, std::vector<EditorAssetFile>& files) const;
 	void asset_params_replace(const int32_t &asset_id, std::vector<EditorAssetParam> &params) const;
 
 	void asset_add_or_update(EditorAsset &asset) const;
+	static void create_singleton();
 };

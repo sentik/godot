@@ -10,8 +10,13 @@ void errorLogCallback(void *pStatement, int iErrCode, const char *zMsg) {
 		fprintf(stderr, "(%d) %s\n", iErrCode, zMsg);
 	}
 }
-		  
+
+EditorFileSystemDb *EditorFileSystemDb::singleton = nullptr;
+
+
 EditorFileSystemDb::EditorFileSystemDb() {
+	singleton = this;
+
 	WARN_PRINT("storage->libversion: " + String(storage->libversion().c_str()));
 
 	const auto thread_safe_mode = sqlite_orm::threadsafe();
@@ -56,6 +61,11 @@ EditorFileSystemDb::EditorFileSystemDb() {
 	WARN_PRINT("storage->vacuum finished");
 }
 
+bool EditorFileSystemDb::asset_exist(const String &p_path) const {
+	const auto count = storage->count<EditorAsset>(sqlite_orm::where(sqlite_orm::eq(&EditorAsset::file_path, p_path)), sqlite_orm::limit(1));
+	return count > 0;
+}
+
 std::optional<EditorAsset> EditorFileSystemDb::asset_get(const String &p_path) const {
 	auto entry = storage->get_all<EditorAsset>(sqlite_orm::where(sqlite_orm::eq(&EditorAsset::file_path, p_path)), sqlite_orm::limit(1));
 	if (entry.empty())
@@ -68,9 +78,21 @@ std::vector<EditorAssetParam> EditorFileSystemDb::asset_params_get(const int32_t
 	return entry;
 }
 
-std::vector<EditorAssetFile> EditorFileSystemDb::asset_files_get(const int32_t &asset_id) const {
-	auto entry = storage->get_all<EditorAssetFile>(sqlite_orm::where(sqlite_orm::eq(&EditorAssetFile::asset_id, asset_id)));
-	return entry;
+std::vector<EditorAssetFile> EditorFileSystemDb::asset_files_get(const int32_t &asset_id, const EditorAssetFileType::_enumerated &file_type) const {
+	if (file_type == EditorAssetFileType::Unknown) {
+		auto entry = storage->get_all<EditorAssetFile>
+		(
+			sqlite_orm::where(sqlite_orm::eq(&EditorAssetFile::asset_id, asset_id))
+		);
+		return entry;
+	}
+	else {
+		auto entry = storage->get_all<EditorAssetFile>
+		(
+			sqlite_orm::where( sqlite_orm::and_(sqlite_orm::eq(&EditorAssetFile::asset_id, asset_id), sqlite_orm::eq(&EditorAssetFile::file_type, file_type)))
+		);
+		return entry;
+	}
 }
 
 void EditorFileSystemDb::asset_files_replace(const int32_t &asset_id, std::vector<EditorAssetFile> &files) const {
@@ -90,6 +112,7 @@ void EditorFileSystemDb::asset_params_replace(const int32_t &asset_id, std::vect
 }
 
 void EditorFileSystemDb::asset_add_or_update(EditorAsset &asset) const {
+	asset.import_modified_time = std::time(nullptr);
 	if (asset.has_value()) {
 		storage->update(asset);
 	} else {
@@ -97,4 +120,8 @@ void EditorFileSystemDb::asset_add_or_update(EditorAsset &asset) const {
 		const auto rows = storage->select(sqlite_orm::columns(&EditorAsset::asset_id), sqlite_orm::from<EditorAsset>(), sqlite_orm::where(sqlite_orm::is_equal(&EditorAsset::uid, asset.uid)));
 		asset.asset_id = rows[0]._Myfirst._Val;
 	}
+}
+
+void EditorFileSystemDb::create_singleton() {
+	memnew(EditorFileSystemDb);
 }

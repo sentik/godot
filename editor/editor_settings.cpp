@@ -895,6 +895,7 @@ void EditorSettings::create() {
 		}
 
 		singleton->save_changed_setting = true;
+		singleton->load_project_metadata();
 
 		print_verbose("EditorSettings: Load OK!");
 
@@ -922,6 +923,7 @@ fail:
 	singleton->set_path(config_file_path, true);
 	singleton->save_changed_setting = true;
 	singleton->_load_defaults(extra_config);
+	singleton->load_project_metadata();
 	singleton->setup_language();
 	singleton->setup_network();
 	singleton->list_text_editor_themes();
@@ -1131,25 +1133,28 @@ void EditorSettings::add_property_hint(const PropertyInfo &p_hint) {
 
 // Metadata
 
+void EditorSettings::load_project_metadata() {
+	if (project_metadata == nullptr) {
+		Ref<ConfigFile> cf = memnew(ConfigFile);
+		project_metadata = cf;
+
+		String path = EditorPaths::get_singleton()->get_project_settings_dir().path_join("project_metadata.cfg");
+		Error err = project_metadata->load(path);
+		ERR_FAIL_COND_MSG(err != OK && err != ERR_FILE_NOT_FOUND, "Cannot load editor settings from file '" + path + "'.");
+	}
+}
+
 void EditorSettings::set_project_metadata(const String &p_section, const String &p_key, Variant p_data) {
-	Ref<ConfigFile> cf = memnew(ConfigFile);
+	_THREAD_SAFE_METHOD_
+
 	String path = EditorPaths::get_singleton()->get_project_settings_dir().path_join("project_metadata.cfg");
-	Error err;
-	err = cf->load(path);
-	ERR_FAIL_COND_MSG(err != OK && err != ERR_FILE_NOT_FOUND, "Cannot load editor settings from file '" + path + "'.");
-	cf->set_value(p_section, p_key, p_data);
-	err = cf->save(path);
+	project_metadata->set_value(p_section, p_key, p_data);
+	Error err = project_metadata->save(path);
 	ERR_FAIL_COND_MSG(err != OK, "Cannot save editor settings to file '" + path + "'.");
 }
 
 Variant EditorSettings::get_project_metadata(const String &p_section, const String &p_key, Variant p_default) const {
-	Ref<ConfigFile> cf = memnew(ConfigFile);
-	String path = EditorPaths::get_singleton()->get_project_settings_dir().path_join("project_metadata.cfg");
-	Error err = cf->load(path);
-	if (err != OK) {
-		return p_default;
-	}
-	return cf->get_value(p_section, p_key, p_default);
+	return project_metadata->get_value(p_section, p_key, p_default);
 }
 
 void EditorSettings::set_favorites(const Vector<String> &p_favorites) {

@@ -30,6 +30,7 @@
 
 #include "filesystem_dock.h"
 
+#include "editor_file_system_db.h"
 #include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
@@ -974,7 +975,7 @@ void FileSystemDock::_select_file(const String &p_path, bool p_select_in_favorit
 			fpath = fpath.substr(0, fpath.length() - 1);
 		}
 	} else if (fpath != "Favorites") {
-		if (FileAccess::exists(fpath + ".import")) {
+		if (EditorFileSystemDb::get_singleton()->asset_exist(fpath)) {
 			Ref<ConfigFile> config;
 			config.instantiate();
 			Error err = config->load(fpath + ".import");

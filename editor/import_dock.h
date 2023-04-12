@@ -41,6 +41,10 @@
 #include "scene/gui/option_button.h"
 #include "scene/gui/popup_menu.h"
 
+#include <vector>
+
+struct EditorAssetParam;
+struct EditorAsset;
 class ImportDockParameters;
 class ImportDock : public VBoxContainer {
 	GDCLASS(ImportDock, VBoxContainer);
@@ -67,7 +71,7 @@ class ImportDock : public VBoxContainer {
 
 	void _preset_selected(int p_idx);
 	void _importer_selected(int i_idx);
-	void _update_options(const String &p_path, const Ref<ConfigFile> &p_config = Ref<ConfigFile>());
+	void _update_options(const String &p_path, const std::vector<EditorAssetParam> &editor_asset_params);
 	void _update_preset_menu();
 	void _add_keep_import_option(const String &p_importer_name);
 

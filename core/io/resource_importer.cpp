@@ -34,24 +34,38 @@
 #include "core/io/config_file.h"
 #include "core/os/os.h"
 #include "core/variant/variant_parser.h"
+#include "editor/editor_file_system_db.h"
 
 bool ResourceFormatImporter::SortImporterByName::operator()(const Ref<ResourceImporter> &p_a, const Ref<ResourceImporter> &p_b) const {
 	return p_a->get_importer_name() < p_b->get_importer_name();
 }
 
 Error ResourceFormatImporter::_get_path_and_type(const String &p_path, PathAndType &r_path_and_type, bool *r_valid) const {
-	Error err;
-	Ref<FileAccess> f = FileAccess::open(p_path + ".import", FileAccess::READ, &err);
-
-	if (f.is_null()) {
+	const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path);
+	if (!editor_asset.has_value()) {
 		if (r_valid) {
 			*r_valid = false;
 		}
-		return err;
+		return Error::ERR_FILE_NOT_FOUND;
 	}
 
-	VariantParser::StreamFile stream;
-	stream.f = f;
+	const auto editor_asset_files = EditorFileSystemDb::get_singleton()->asset_files_get(editor_asset->asset_id, EditorAssetFileType::DestFile);
+	for (const auto& editor_asset_file : editor_asset_files) {
+		if (editor_asset_file.variant_name.is_empty() || OS::get_singleton()->has_feature(editor_asset_file.variant_name)) {
+			r_path_and_type.path = editor_asset_file.path;
+			break;
+		}
+	}
+
+
+	r_path_and_type.type = ClassDB::get_compatibility_remapped_class(editor_asset->resource_type);
+	r_path_and_type.uid = editor_asset->uid;
+	r_path_and_type.group_file = editor_asset->group_file;
+	r_path_and_type.metadata = editor_asset->metadata;
+	r_path_and_type.importer = editor_asset->importer_name;
+	if (r_valid) {
+		*r_valid = editor_asset->is_valid;
+	}
 
 	String assign;
 	Variant value;
@@ -61,53 +75,6 @@ Error ResourceFormatImporter::_get_path_and_type(const String &p_path, PathAndTy
 		*r_valid = true;
 	}
 
-	int lines = 0;
-	String error_text;
-	bool path_found = false; //first match must have priority
-	while (true) {
-		assign = Variant();
-		next_tag.fields.clear();
-		next_tag.name = String();
-
-		err = VariantParser::parse_tag_assign_eof(&stream, lines, error_text, next_tag, assign, value, nullptr, true);
-		if (err == ERR_FILE_EOF) {
-			return OK;
-		} else if (err != OK) {
-			ERR_PRINT("ResourceFormatImporter::load - " + p_path + ".import:" + itos(lines) + " error: " + error_text);
-			return err;
-		}
-
-		if (!assign.is_empty()) {
-			if (!path_found && assign.begins_with("path.") && r_path_and_type.path.is_empty()) {
-				String feature = assign.get_slicec('.', 1);
-				if (OS::get_singleton()->has_feature(feature)) {
-					r_path_and_type.path = value;
-					path_found = true; //first match must have priority
-				}
-
-			} else if (!path_found && assign == "path") {
-				r_path_and_type.path = value;
-				path_found = true; //first match must have priority
-			} else if (assign == "type") {
-				r_path_and_type.type = ClassDB::get_compatibility_remapped_class(value);
-			} else if (assign == "importer") {
-				r_path_and_type.importer = value;
-			} else if (assign == "uid") {
-				r_path_and_type.uid = ResourceUID::get_singleton()->text_to_id(value);
-			} else if (assign == "group_file") {
-				r_path_and_type.group_file = value;
-			} else if (assign == "metadata") {
-				r_path_and_type.metadata = value;
-			} else if (assign == "valid") {
-				if (r_valid) {
-					*r_valid = value;
-				}
-			}
-
-		} else if (next_tag.name != "remap") {
-			break;
-		}
-	}
 
 #ifdef TOOLS_ENABLED
 	if (r_path_and_type.metadata && !r_path_and_type.path.is_empty()) {
@@ -193,11 +160,11 @@ void ResourceFormatImporter::get_recognized_extensions_for_type(const String &p_
 }
 
 bool ResourceFormatImporter::exists(const String &p_path) const {
-	return FileAccess::exists(p_path + ".import");
+	return EditorFileSystemDb::get_singleton()->asset_exist(p_path);
 }
 
 bool ResourceFormatImporter::recognize_path(const String &p_path, const String &p_for_type) const {
-	return FileAccess::exists(p_path + ".import");
+	return EditorFileSystemDb::get_singleton()->asset_exist(p_path);
 }
 
 Error ResourceFormatImporter::get_import_order_threads_and_importer(const String &p_path, int &r_order, bool &r_can_threads, String &r_importer) const {
@@ -206,8 +173,8 @@ Error ResourceFormatImporter::get_import_order_threads_and_importer(const String
 
 	r_can_threads = false;
 	Ref<ResourceImporter> importer;
-
-	if (FileAccess::exists(p_path + ".import")) {
+	
+	if (EditorFileSystemDb::get_singleton()->asset_exist(p_path)) {
 		PathAndType pat;
 		Error err = _get_path_and_type(p_path, pat);
 
@@ -231,7 +198,7 @@ Error ResourceFormatImporter::get_import_order_threads_and_importer(const String
 int ResourceFormatImporter::get_import_order(const String &p_path) const {
 	Ref<ResourceImporter> importer;
 
-	if (FileAccess::exists(p_path + ".import")) {
+	if (EditorFileSystemDb::get_singleton()->asset_exist(p_path)) {
 		PathAndType pat;
 		Error err = _get_path_and_type(p_path, pat);
 
@@ -275,44 +242,14 @@ String ResourceFormatImporter::get_internal_resource_path(const String &p_path) 
 }
 
 void ResourceFormatImporter::get_internal_resource_path_list(const String &p_path, List<String> *r_paths) {
-	Error err;
-	Ref<FileAccess> f = FileAccess::open(p_path + ".import", FileAccess::READ, &err);
-
-	if (f.is_null()) {
+	const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path);
+	if (!editor_asset.has_value()) {
 		return;
 	}
 
-	VariantParser::StreamFile stream;
-	stream.f = f;
-
-	String assign;
-	Variant value;
-	VariantParser::Tag next_tag;
-
-	int lines = 0;
-	String error_text;
-	while (true) {
-		assign = Variant();
-		next_tag.fields.clear();
-		next_tag.name = String();
-
-		err = VariantParser::parse_tag_assign_eof(&stream, lines, error_text, next_tag, assign, value, nullptr, true);
-		if (err == ERR_FILE_EOF) {
-			return;
-		} else if (err != OK) {
-			ERR_PRINT("ResourceFormatImporter::get_internal_resource_path_list - " + p_path + ".import:" + itos(lines) + " error: " + error_text);
-			return;
-		}
-
-		if (!assign.is_empty()) {
-			if (assign.begins_with("path.")) {
-				r_paths->push_back(value);
-			} else if (assign == "path") {
-				r_paths->push_back(value);
-			}
-		} else if (next_tag.name != "remap") {
-			break;
-		}
+	const auto editor_asset_files = EditorFileSystemDb::get_singleton()->asset_files_get(editor_asset->asset_id, EditorAssetFileType::DestFile);
+	for (const auto& editor_asset_file : editor_asset_files) {
+		r_paths->push_back(editor_asset_file.path);
 	}
 }
 
@@ -389,10 +326,9 @@ Ref<ResourceImporter> ResourceFormatImporter::get_importer_by_name(const String 
 		return Ref<ResourceImporter>();
 	}
 
-	for (int i = 0; i < importers.size(); i++) {
-		if (importers[i]->get_importer_name() == p_name) {
-			return importers[i];
-		}
+	const auto importer = importers_map.getptr(p_name);
+	if (importer && importer->is_valid()) {
+		return *importer;
 	}
 
 	return Ref<ResourceImporter>();
@@ -447,25 +383,22 @@ bool ResourceFormatImporter::are_import_settings_valid(const String &p_path) con
 		return false;
 	}
 
-	for (int i = 0; i < importers.size(); i++) {
-		if (importers[i]->get_importer_name() == pat.importer) {
-			if (!importers[i]->are_import_settings_valid(p_path)) { //importer thinks this is not valid
-				return false;
-			}
-		}
+	const auto importer = importers_map.getptr(pat.importer);
+	if (importer == nullptr || importer->is_null()) {
+		return false;
+	}
+
+	if (!(*importer)->are_import_settings_valid(p_path)) { //importer thinks this is not valid
+		return false;
 	}
 
 	return true;
 }
 
 String ResourceFormatImporter::get_import_settings_hash() const {
-	Vector<Ref<ResourceImporter>> sorted_importers = importers;
-
-	sorted_importers.sort_custom<SortImporterByName>();
-
 	String hash;
-	for (int i = 0; i < sorted_importers.size(); i++) {
-		hash += ":" + sorted_importers[i]->get_importer_name() + ":" + sorted_importers[i]->get_import_settings_string();
+	for (int i = 0; i < importers.size(); i++) {
+		hash += ":" + importers[i]->get_importer_name() + ":" + importers[i]->get_import_settings_string();
 	}
 	return hash.md5_text();
 }
@@ -485,9 +418,13 @@ void ResourceFormatImporter::add_importer(const Ref<ResourceImporter> &p_importe
 	ERR_FAIL_COND(p_importer.is_null());
 	if (p_first_priority) {
 		importers.insert(0, p_importer);
+		importers_map.insert(p_importer->get_importer_name(), p_importer, true);
 	} else {
 		importers.push_back(p_importer);
+		importers_map.insert(p_importer->get_importer_name(), p_importer);
 	}
+
+	importers.sort_custom<SortImporterByName>();
 }
 
 /////

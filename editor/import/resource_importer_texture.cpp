@@ -35,6 +35,7 @@
 #include "core/io/image_loader.h"
 #include "core/version.h"
 #include "editor/editor_file_system.h"
+#include "editor/editor_file_system_db.h"
 #include "editor/editor_node.h"
 #include "editor/editor_scale.h"
 #include "editor/editor_settings.h"
@@ -96,6 +97,12 @@ void ResourceImporterTexture::update_imports() {
 		}
 
 		for (const KeyValue<StringName, MakeInfo> &E : make_flags) {
+
+			const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(E.key);
+			ERR_CONTINUE(!editor_asset.has_value());
+
+			const auto editor_asset_params = EditorFileSystemDb::get_singleton()->asset_params_get(editor_asset->asset_id);
+
 			Ref<ConfigFile> cf;
 			cf.instantiate();
 			String src_path = String(E.key) + ".import";

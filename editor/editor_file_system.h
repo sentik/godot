@@ -38,6 +38,8 @@
 #include "core/templates/safe_refcount.h"
 #include "scene/main/node.h"
 
+#include <vector>
+
 class FileAccess;
 
 struct EditorProgressBG;
@@ -181,7 +183,7 @@ class EditorFileSystem : public Node {
 	bool revalidate_import_files = false;
 
 	void _scan_filesystem();
-
+	void reload_filesystem_cache();
 	HashSet<String> late_update_files;
 
 	void _save_late_updated_files();
@@ -195,8 +197,8 @@ class EditorFileSystem : public Node {
 		String type;
 		String resource_script_class;
 		ResourceUID::ID uid = ResourceUID::INVALID_ID;
-		uint64_t modification_time = 0;
-		uint64_t import_modification_time = 0;
+		time_t modification_time = 0;
+		time_t import_modification_time = 0;
 		Vector<String> deps;
 		bool import_valid = false;
 		String import_group_file;
@@ -281,7 +283,8 @@ class EditorFileSystem : public Node {
 	HashSet<String> group_file_cache;
 
 	struct ImportThreadData {
-		const ImportFile *reimport_files;
+		const std::vector<ImportFile> *reimport_files;
+
 		int reimport_from;
 		int max_index = 0;
 	};

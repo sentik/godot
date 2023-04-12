@@ -30,6 +30,8 @@
 
 #include "navigation_mesh_editor_plugin.h"
 
+#include "editor/editor_file_system_db.h"
+
 #ifdef TOOLS_ENABLED
 
 #include "../navigation_mesh_generator.h"
@@ -79,7 +81,7 @@ void NavigationMeshEditor::_bake_pressed() {
 					return;
 				}
 			} else {
-				if (FileAccess::exists(base + ".import")) {
+				if (EditorFileSystemDb::get_singleton()->asset_exist(base)) {
 					err_dialog->set_text(TTR("Cannot generate navigation mesh because it belongs to a resource which was imported."));
 					err_dialog->popup_centered();
 					return;
@@ -87,7 +89,7 @@ void NavigationMeshEditor::_bake_pressed() {
 			}
 		}
 	} else {
-		if (FileAccess::exists(path + ".import")) {
+		if (EditorFileSystemDb::get_singleton()->asset_exist(path)) {
 			err_dialog->set_text(TTR("Cannot generate navigation mesh because the resource was imported from another type."));
 			err_dialog->popup_centered();
 			return;

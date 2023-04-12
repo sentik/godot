@@ -106,6 +106,7 @@
 #endif // DISABLE_DEPRECATED
 #endif // TOOLS_ENABLED
 
+#include "editor/editor_file_system_db.h"
 #include "modules/modules_enabled.gen.h" // For mono.
 
 #if defined(MODULE_MONO_ENABLED) && defined(TOOLS_ENABLED)
@@ -2337,7 +2338,7 @@ Error Main::setup2(Thread::ID p_main_tid_override) {
 	}
 
 	camera_server = CameraServer::create();
-
+	EditorFileSystemDb::create_singleton();
 	MAIN_PRINT("Main: Load Physics");
 
 	initialize_physics();

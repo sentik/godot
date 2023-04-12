@@ -31,6 +31,7 @@
 #include "animation_track_editor.h"
 
 #include "animation_track_editor_plugins.h"
+#include "editor_file_system_db.h"
 #include "core/input/input.h"
 #include "editor/animation_bezier_editor.h"
 #include "editor/editor_node.h"
@@ -1286,7 +1287,9 @@ void AnimationTimelineEdit::_anim_loop_pressed() {
 		undo_redo->commit_action();
 	} else {
 		String base_path = animation->get_path();
-		if (FileAccess::exists(base_path + ".import")) {
+
+		const auto editor_asset_exist = EditorFileSystemDb::get_singleton()->asset_exist(base_path);
+		if (editor_asset_exist) {
 			EditorNode::get_singleton()->show_warning(TTR("Can't change loop mode on animation instanced from imported scene."));
 		} else {
 			EditorNode::get_singleton()->show_warning(TTR("Can't change loop mode on animation embedded in another scene."));
@@ -4320,13 +4323,17 @@ void AnimationTrackEditor::_update_tracks() {
 					file_read_only = true;
 				}
 			} else {
-				if (FileAccess::exists(base + ".import")) {
+				const auto editor_asset_exist = EditorFileSystemDb::get_singleton()->asset_exist(base);
+
+				if (editor_asset_exist) {
 					file_read_only = true;
 				}
 			}
 		}
 	} else {
-		if (FileAccess::exists(animation->get_path() + ".import")) {
+		const auto path = animation->get_path();
+		const auto editor_asset_exist = EditorFileSystemDb::get_singleton()->asset_exist(path);
+		if (editor_asset_exist) {
 			file_read_only = true;
 		}
 	}

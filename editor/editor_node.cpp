@@ -30,6 +30,7 @@
 
 #include "editor_node.h"
 
+#include "editor_file_system_db.h"
 #include "core/config/project_settings.h"
 #include "core/input/input.h"
 #include "core/io/config_file.h"
@@ -724,7 +725,8 @@ void EditorNode::_notification(int p_what) {
 		case NOTIFICATION_APPLICATION_FOCUS_IN: {
 			// Restore the original FPS cap after focusing back on the editor.
 			OS::get_singleton()->set_low_processor_usage_mode_sleep_usec(int(EDITOR_GET("interface/editor/low_processor_mode_sleep_usec")));
-
+			break;
+			
 			EditorFileSystem::get_singleton()->scan_changes();
 			_scan_external_changes();
 		} break;
@@ -1331,7 +1333,7 @@ void EditorNode::save_resource_in_path(const Ref<Resource> &p_resource, const St
 void EditorNode::save_resource(const Ref<Resource> &p_resource) {
 	// If the resource has been imported, ask the user to use a different path in order to save it.
 	String path = p_resource->get_path();
-	if (path.is_resource_file() && !FileAccess::exists(path + ".import")) {
+	if (path.is_resource_file() && EditorFileSystemDb::get_singleton()->asset_exist(path) == false) {
 		save_resource_in_path(p_resource, p_resource->get_path());
 	} else {
 		save_resource_as(p_resource);
@@ -1351,7 +1353,7 @@ void EditorNode::save_resource_as(const Ref<Resource> &p_resource, const String 
 				}
 			}
 		} else {
-			if (FileAccess::exists(path + ".import")) {
+			if (EditorFileSystemDb::get_singleton()->asset_exist(path)) {
 				show_warning(TTR("This resource can't be saved because it was imported from another file. Make it unique first."));
 				return;
 			}
@@ -2354,7 +2356,7 @@ void EditorNode::_edit_current(bool p_skip_foreign) {
 		if (subr_idx != -1) {
 			String base_path = current_res->get_path().substr(0, subr_idx);
 			if (!base_path.is_resource_file()) {
-				if (FileAccess::exists(base_path + ".import")) {
+				if (EditorFileSystemDb::get_singleton()->asset_exist(base_path)) {
 					if (get_edited_scene() && get_edited_scene()->get_scene_file_path() == base_path) {
 						info_is_warning = true;
 					}
@@ -2365,13 +2367,19 @@ void EditorNode::_edit_current(bool p_skip_foreign) {
 					}
 				}
 			} else {
-				if (FileAccess::exists(base_path + ".import")) {
+				if (EditorFileSystemDb::get_singleton()->asset_exist(base_path)) {
 					editable_info = TTR("This resource belongs to a scene that was imported, so it's not editable.\nPlease read the documentation relevant to importing scenes to better understand this workflow.");
 				}
 			}
-		} else if (current_res->get_path().is_resource_file()) {
-			if (FileAccess::exists(current_res->get_path() + ".import")) {
-				editable_info = TTR("This resource was imported, so it's not editable. Change its settings in the import panel and then re-import.");
+		}
+		else
+		{
+			const auto current_res_path = current_res->get_path(); 
+
+			if (current_res_path.is_resource_file()) {
+				if (EditorFileSystemDb::get_singleton()->asset_exist(current_res_path)) {
+					editable_info = TTR("This resource was imported, so it's not editable. Change its settings in the import panel and then re-import.");
+				}
 			}
 		}
 	} else if (is_node) {
@@ -2394,7 +2402,7 @@ void EditorNode::_edit_current(bool p_skip_foreign) {
 
 		if (get_edited_scene() && !get_edited_scene()->get_scene_file_path().is_empty()) {
 			String source_scene = get_edited_scene()->get_scene_file_path();
-			if (FileAccess::exists(source_scene + ".import")) {
+			if (EditorFileSystemDb::get_singleton()->asset_exist(source_scene)) {
 				editable_info = TTR("This scene was imported, so changes to it won't be kept.\nInstantiating or inheriting it will allow you to make changes to it.\nPlease read the documentation relevant to importing scenes to better understand this workflow.");
 				info_is_warning = true;
 			}
@@ -3902,8 +3910,8 @@ Error EditorNode::load_scene(const String &p_scene, bool p_ignore_broken_deps, b
 				return OK;
 			}
 		}
-
-		if (!p_force_open_imported && FileAccess::exists(p_scene + ".import")) {
+		
+		if (!p_force_open_imported && EditorFileSystemDb::get_singleton()->asset_exist(p_scene)) {
 			open_imported->set_text(vformat(TTR("Scene '%s' was automatically imported, so it can't be modified.\nTo make changes to it, a new inherited scene can be created."), p_scene.get_file()));
 			open_imported->popup_centered();
 			new_inherited_button->grab_focus();
@@ -4223,14 +4231,14 @@ bool EditorNode::is_resource_read_only(Ref<Resource> p_resource, bool p_foreign_
 				}
 			} else {
 				// If a corresponding .import file exists for the base file, we assume it to be imported and should therefore treated as read-only.
-				if (FileAccess::exists(base + ".import")) {
+				if (EditorFileSystemDb::get_singleton()->asset_exist(base)) {
 					return true;
 				}
 			}
 		}
 	} else {
 		// The resource is not a subresource, but if it has an .import file, it's imported so treat it as read only.
-		if (FileAccess::exists(path + ".import")) {
+		if (EditorFileSystemDb::get_singleton()->asset_exist(path)) {
 			return true;
 		}
 	}

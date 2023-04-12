@@ -218,14 +218,37 @@ EditorFileSystemDirectory::~EditorFileSystemDirectory() {
 
 void EditorFileSystem::_scan_filesystem() {
 	ERR_FAIL_COND(!scanning || new_filesystem);
+	
+	reload_filesystem_cache();
 
+	EditorProgressBG scan_progress("efs", "ScanFS", 1000);
+
+	ScanProgress sp;
+	sp.low = 0;
+	sp.hi = 1;
+	sp.progress = &scan_progress;
+
+	new_filesystem = memnew(EditorFileSystemDirectory);
+	new_filesystem->parent = nullptr;
+
+	Ref<DirAccess> d = DirAccess::create(DirAccess::ACCESS_RESOURCES);
+	d->change_dir("res://");
+	_scan_new_dir(new_filesystem, d, sp);
+
+	file_cache.clear(); //clear caches, no longer needed
+
+	if (!first_scan) {
+		//on the first scan this is done from the main thread after re-importing
+		_save_filesystem_cache();
+	}
+
+	scanning = false;
+}
+
+void EditorFileSystem::reload_filesystem_cache() {
 	//read .fscache
-	String cpath;
-
-	sources_changed.clear();
 	file_cache.clear();
-
-	String project = ProjectSettings::get_singleton()->get_resource_path();
+	sources_changed.clear();
 
 	String fscache = EditorPaths::get_singleton()->get_project_settings_dir().path_join(CACHE_FILE_NAME);
 	{
@@ -233,6 +256,7 @@ void EditorFileSystem::_scan_filesystem() {
 
 		bool first = true;
 		if (f.is_valid()) {
+			String cpath;
 			//read the disk cache
 			while (!f->eof_reached()) {
 				String l = f->get_line().strip_edges();
@@ -316,29 +340,6 @@ void EditorFileSystem::_scan_filesystem() {
 		Ref<DirAccess> d = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
 		d->remove(update_cache); //bye bye update cache
 	}
-
-	EditorProgressBG scan_progress("efs", "ScanFS", 1000);
-
-	ScanProgress sp;
-	sp.low = 0;
-	sp.hi = 1;
-	sp.progress = &scan_progress;
-
-	new_filesystem = memnew(EditorFileSystemDirectory);
-	new_filesystem->parent = nullptr;
-
-	Ref<DirAccess> d = DirAccess::create(DirAccess::ACCESS_RESOURCES);
-	d->change_dir("res://");
-	_scan_new_dir(new_filesystem, d, sp);
-
-	file_cache.clear(); //clear caches, no longer needed
-
-	if (!first_scan) {
-		//on the first scan this is done from the main thread after re-importing
-		_save_filesystem_cache();
-	}
-
-	scanning = false;
 }
 
 void EditorFileSystem::_save_filesystem_cache() {
@@ -621,33 +622,15 @@ void EditorFileSystem::scan() {
 
 	_update_extensions();
 
-	if (!use_threads) {
-		scanning = true;
-		scan_total = 0;
-		_scan_filesystem();
-		if (filesystem) {
-			memdelete(filesystem);
-		}
-		//file_type_cache.clear();
-		filesystem = new_filesystem;
-		new_filesystem = nullptr;
-		_update_scan_actions();
-		scanning = false;
-		_update_pending_script_classes();
-		emit_signal(SNAME("filesystem_changed"));
-		emit_signal(SNAME("sources_changed"), sources_changed.size() > 0);
-		first_scan = false;
-	} else {
-		ERR_FAIL_COND(thread.is_started());
-		set_process(true);
-		Thread::Settings s;
-		scanning = true;
-		scan_total = 0;
-		s.priority = Thread::PRIORITY_LOW;
-		thread.start(_thread_func, this, s);
-		//tree->hide();
-		//progress->show();
-	}
+	ERR_FAIL_COND(thread.is_started());
+	set_process(true);
+	Thread::Settings s;
+	scanning = true;
+	scan_total = 0;
+	s.priority = Thread::PRIORITY_HIGH;
+	thread.start(_thread_func, this, s);
+	//tree->hide();
+	//progress->show();
 }
 
 void EditorFileSystem::ScanProgress::update(int p_current, int p_total) const {
@@ -665,8 +648,8 @@ EditorFileSystem::ScanProgress EditorFileSystem::ScanProgress::get_sub(int p_cur
 }
 
 void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAccess> &da, const ScanProgress &p_progress) {
-	List<String> dirs;
-	List<String> files;
+	Vector<String> dirs;
+	Vector<String> files;
 
 	String cd = da->get_current_dir();
 
@@ -707,8 +690,8 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 	int total = dirs.size() + files.size();
 	int idx = 0;
 
-	for (List<String>::Element *E = dirs.front(); E; E = E->next(), idx++) {
-		if (da->change_dir(E->get()) == OK) {
+	for (const auto E: dirs) {
+		if (da->change_dir(E) == OK) {
 			String d = da->get_current_dir();
 
 			if (d == cd || !d.begins_with(cd)) {
@@ -717,7 +700,7 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 				EditorFileSystemDirectory *efd = memnew(EditorFileSystemDirectory);
 
 				efd->parent = p_dir;
-				efd->name = E->get();
+				efd->name = E;
 
 				_scan_new_dir(efd, da, p_progress.get_sub(idx, total));
 
@@ -737,20 +720,21 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 				da->change_dir("..");
 			}
 		} else {
-			ERR_PRINT("Cannot go into subdir '" + E->get() + "'.");
+			ERR_PRINT("Cannot go into subdir '" + E + "'.");
 		}
 
 		p_progress.update(idx, total);
 	}
 
-	for (List<String>::Element *E = files.front(); E; E = E->next(), idx++) {
-		String ext = E->get().get_extension().to_lower();
+
+	for (const auto E : files) {
+		String ext = E.get_extension().to_lower();
 		if (!valid_extensions.has(ext)) {
 			continue; //invalid
 		}
 
 		EditorFileSystemDirectory::FileInfo *fi = memnew(EditorFileSystemDirectory::FileInfo);
-		fi->file = E->get();
+		fi->file = E;
 
 		String path = cd.path_join(fi->file);
 
@@ -758,13 +742,9 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 		uint64_t mt = FileAccess::get_modified_time(path);
 
 		if (import_extensions.has(ext)) {
-			//is imported
-			uint64_t import_mt = 0;
-			if (FileAccess::exists(path + ".import")) {
-				import_mt = FileAccess::get_modified_time(path + ".import");
-			}
+			const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(path).value_or(EditorAsset());
 
-			if (fc && fc->modification_time == mt && fc->import_modification_time == import_mt && !_test_for_reimport(path, true)) {
+			if (fc && fc->modification_time == mt && fc->import_modification_time == editor_asset.import_modified_time && !_test_for_reimport(path, true)) {
 				fi->type = fc->type;
 				fi->resource_script_class = fc->resource_script_class;
 				fi->uid = fc->uid;
@@ -782,7 +762,7 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 					ItemAction ia;
 					ia.action = ItemAction::ACTION_FILE_TEST_REIMPORT;
 					ia.dir = p_dir;
-					ia.file = E->get();
+					ia.file = E;
 					scan_actions.push_back(ia);
 				}
 
@@ -811,7 +791,7 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 				ItemAction ia;
 				ia.action = ItemAction::ACTION_FILE_TEST_REIMPORT;
 				ia.dir = p_dir;
-				ia.file = E->get();
+				ia.file = E;
 				scan_actions.push_back(ia);
 			}
 		} else {
@@ -1000,13 +980,15 @@ void EditorFileSystem::_scan_fs_changes(EditorFileSystemDirectory *p_dir, const 
 
 			bool reimport = false;
 
+			const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(path);
+
 			if (mt != p_dir->files[i]->modified_time) {
 				reimport = true; //it was modified, must be reimported.
-			} else if (!FileAccess::exists(path + ".import")) {
+			} else if (!editor_asset.has_value()) {
 				reimport = true; //no .import file, obviously reimport
 			} else {
-				uint64_t import_mt = FileAccess::get_modified_time(path + ".import");
-				if (import_mt != p_dir->files[i]->import_modified_time) {
+				
+				if (editor_asset->import_modified_time != p_dir->files[i]->import_modified_time) {
 					reimport = true;
 				} else if (_test_for_reimport(path, true)) {
 					reimport = true;
@@ -1087,32 +1069,12 @@ void EditorFileSystem::scan_changes() {
 	scanning_changes = true;
 	scanning_changes_done = false;
 
-	if (!use_threads) {
-		if (filesystem) {
-			EditorProgressBG pr("sources", TTR("ScanSources"), 1000);
-			ScanProgress sp;
-			sp.progress = &pr;
-			sp.hi = 1;
-			sp.low = 0;
-			scan_total = 0;
-			_scan_fs_changes(filesystem, sp);
-			bool changed = _update_scan_actions();
-			_update_pending_script_classes();
-			if (changed) {
-				emit_signal(SNAME("filesystem_changed"));
-			}
-		}
-		scanning_changes = false;
-		scanning_changes_done = true;
-		emit_signal(SNAME("sources_changed"), sources_changed.size() > 0);
-	} else {
-		ERR_FAIL_COND(thread_sources.is_started());
-		set_process(true);
-		scan_total = 0;
-		Thread::Settings s;
-		s.priority = Thread::PRIORITY_LOW;
-		thread_sources.start(_thread_func_sources, this, s);
-	}
+	ERR_FAIL_COND(thread_sources.is_started());
+	set_process(true);
+	scan_total = 0;
+	Thread::Settings s;
+	s.priority = Thread::PRIORITY_HIGH;
+	thread_sources.start(_thread_func_sources, this, s);
 }
 
 void EditorFileSystem::_notification(int p_what) {
@@ -2029,17 +1991,49 @@ void EditorFileSystem::reimport_file_with_custom_parameters(const String &p_file
 }
 
 void EditorFileSystem::_reimport_thread(uint32_t p_index, ImportThreadData *p_import_data) {
-	p_import_data->max_index = MAX(p_import_data->reimport_from + int(p_index), p_import_data->max_index);
-	_reimport_file(p_import_data->reimport_files[p_import_data->reimport_from + p_index].path);
+	auto file = (*p_import_data->reimport_files)[p_index];
+	WARN_PRINT(String("> _reimport_thread: ") + itos(p_index) + " | path: " + file.path);
+	_reimport_file(file.path);
 }
 
+
+template<typename T>
+	std::vector<std::vector < T >> create_batch(const Vector<T> &collection, const int32_t batch_size = 8) {
+	std::vector<std::vector<T>> batches;
+	if (collection.size() >= batch_size) {
+		std::vector<T> batch;
+		for (int i = 0; i < collection.size(); i++) {
+			const auto item = collection[i];
+			batch.push_back(item);
+			if (i > 0 && i % batch_size == 0) {
+				batches.push_back(batch);
+				batch.clear();
+			}
+		}
+
+		if (batch.size()) {
+			batches.push_back(batch);
+		}
+
+	} else {
+		std::vector<T> batch;
+		for (int i = 0; i < collection.size(); i++) {
+			batch.push_back(collection[i]);
+		}
+		batches.push_back(batch);
+
+	}
+	return batches;
+}
+
+#pragma optimize("", off)
 void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
+
 	ERR_FAIL_COND_MSG(importing, "Attempted to call reimport_files() recursively, this is not allowed.");
 	importing = true;
 
 	Vector<String> reloads;
 
-	EditorProgress pr("reimport", TTR("(Re)Importing Assets"), p_files.size());
 
 	Vector<ImportFile> reimport_files;
 
@@ -2087,56 +2081,47 @@ void EditorFileSystem::reimport_files(const Vector<String> &p_files) {
 
 	bool use_multiple_threads = GLOBAL_GET("editor/import/use_multiple_threads");
 
-	int from = 0;
-	for (int i = 0; i < reimport_files.size(); i++) {
-		if (groups_to_reimport.has(reimport_files[i].path)) {
-			continue;
-		}
+	int current_index = 0;
+	Vector<WorkerThreadPool::GroupID> tasks;
+	const auto batches = create_batch(reimport_files);
 
-		if (use_multiple_threads && reimport_files[i].threaded) {
-			if (i + 1 == reimport_files.size() || reimport_files[i + 1].importer != reimport_files[from].importer) {
-				if (from - i == 0) {
-					// Single file, do not use threads.
-					pr.step(reimport_files[i].path.get_file(), i);
-					_reimport_file(reimport_files[i].path);
-				} else {
-					Ref<ResourceImporter> importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(reimport_files[from].importer);
-					ERR_CONTINUE(!importer.is_valid());
+	EditorProgress pr("reimport", TTR("(Re)Importing Assets"), tasks.size());
 
-					importer->import_threaded_begin();
+	for (const auto& batch : batches) {
+		//for (const auto &file : batch) 
+		{
+			ImportThreadData data;
+			data.reimport_files = &batch;
 
-					ImportThreadData tdata;
-					tdata.max_index = from;
-					tdata.reimport_from = from;
-					tdata.reimport_files = reimport_files.ptr();
+			WorkerThreadPool::GroupID group_task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &EditorFileSystem::_reimport_thread, &data, batch.size(), -1, false, vformat(TTR("Import resources of type: %s"), "file.importer"));
+			//tasks.push_back(group_task);
 
-					WorkerThreadPool::GroupID group_task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &EditorFileSystem::_reimport_thread, &tdata, i - from + 1, -1, false, vformat(TTR("Import resources of type: %s"), reimport_files[from].importer));
-					int current_index = from - 1;
-					do {
-						if (current_index < tdata.max_index) {
-							current_index = tdata.max_index;
-							pr.step(reimport_files[current_index].path.get_file(), current_index);
-						}
-						OS::get_singleton()->delay_usec(1);
-					} while (!WorkerThreadPool::get_singleton()->is_group_task_completed(group_task));
-
-					WorkerThreadPool::get_singleton()->wait_for_group_task_completion(group_task);
-
-					importer->import_threaded_end();
+			do {
+				for (const auto &file : batch) {
+					pr.step(file.path.get_file(), current_index);
+					OS::get_singleton()->delay_usec(10);
 				}
 
-				from = i + 1;
-			}
+				OS::get_singleton()->delay_usec(1);
+			} while (!WorkerThreadPool::get_singleton()->is_group_task_completed(group_task));
 
-		} else {
-			pr.step(reimport_files[i].path.get_file(), i);
-			_reimport_file(reimport_files[i].path);
+
+			WorkerThreadPool::get_singleton()->wait_for_group_task_completion(group_task);
+
+
+
 		}
+		current_index++;
 	}
+
+	//for (const auto &task : tasks) {
+	//	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
+	//}
+
 
 	// Reimport groups.
 
-	from = reimport_files.size();
+	auto from = reimport_files.size();
 
 	if (groups_to_reimport.size()) {
 		HashMap<String, Vector<String>> group_files;
@@ -2411,7 +2396,7 @@ EditorFileSystem::EditorFileSystem() {
 	filesystem->parent = nullptr;
 
 	new_filesystem = nullptr;
-	file_system_db = memnew(EditorFileSystemDb);
+	file_system_db = EditorFileSystemDb::get_singleton();
 	// This should probably also work on Unix and use the string it returns for FAT32 or exFAT
 	Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
 	using_fat32_or_exfat = (da->get_filesystem_type() == "FAT32" || da->get_filesystem_type() == "exFAT");

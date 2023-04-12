@@ -56,6 +56,7 @@ class ResourceFormatImporter : public ResourceFormatLoader {
 	};
 
 	Vector<Ref<ResourceImporter>> importers;
+	HashMap<String, Ref<ResourceImporter>> importers_map;
 
 public:
 	static ResourceFormatImporter *get_singleton() { return singleton; }
