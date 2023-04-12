@@ -51,7 +51,7 @@ class EditorFileSystemDirectory : public Object {
 	bool verified = false; //used for checking changes
 
 	EditorFileSystemDirectory *parent = nullptr;
-	Vector<EditorFileSystemDirectory *> subdirs;
+	LocalVector<EditorFileSystemDirectory *> subdirs;
 
 	struct FileInfo {
 		String file;
@@ -78,7 +78,7 @@ class EditorFileSystemDirectory : public Object {
 
 	void sort_files();
 
-	Vector<FileInfo *> files;
+	LocalVector<FileInfo *> files;
 
 	static void _bind_methods();
 
@@ -169,8 +169,8 @@ class EditorFileSystem : public Node {
 	};
 
 	bool use_threads = true;
-	Thread thread;
-	static void _thread_func(void *_userdata);
+	Thread _scan_filesystem_thread;
+	static void _scan_filesystem_thread_func(void *_userdata);
 
 	EditorFileSystemDirectory *new_filesystem = nullptr;
 	class EditorFileSystemDb *file_system_db = nullptr;
@@ -230,7 +230,17 @@ class EditorFileSystem : public Node {
 	HashSet<String> valid_extensions;
 	HashSet<String> import_extensions;
 
-	void _scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAccess> &da, const ScanProgress &p_progress);
+	struct ScanFilesInDirectory {
+		EditorFileSystemDirectory *p_dir;
+		String parent_dir_access_path;
+		Ref<DirAccess> Directory;
+		LocalVector<EditorFileSystemDirectory::FileInfo*>* Files;
+	};
+
+
+	Mutex scan_new_dir_mutex;
+	void _scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAccess> &p_parent_dir_access, const ScanProgress &p_progress);
+	void _scan_new_dir_files(uint32_t p_index, const ScanFilesInDirectory *context);
 
 	Thread thread_sources;
 	bool scanning_changes = false;
@@ -238,8 +248,8 @@ class EditorFileSystem : public Node {
 
 	static void _thread_func_sources(void *_userdata);
 
-	List<String> sources_changed;
-	List<ItemAction> scan_actions;
+	Vector<String> sources_changed;
+	Vector<ItemAction> scan_actions;
 
 	bool _update_scan_actions();
 
