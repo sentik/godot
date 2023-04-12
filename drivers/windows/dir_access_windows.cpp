@@ -59,7 +59,7 @@ struct DirAccessWindowsPrivate {
 	WIN32_FIND_DATAW fu; //unicode version
 };
 
-const WindowsDriversCache *WindowsDriversCache::singleton_ = new WindowsDriversCache();
+WindowsDriversCache *WindowsDriversCache::singleton_ = new WindowsDriversCache();
 
 // CreateFolderAsync
 

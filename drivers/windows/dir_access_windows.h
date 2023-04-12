@@ -39,7 +39,7 @@ struct DirAccessWindowsPrivate;
 
 class WindowsDriversCache {
 private:
-	static const WindowsDriversCache *singleton_;
+	static WindowsDriversCache *singleton_;
 
 public:
 	enum {
@@ -54,7 +54,7 @@ public:
 
 	WindowsDriversCache();
 	
-	static const WindowsDriversCache *get_singleton() {
+	static WindowsDriversCache *get_singleton() {
 		return singleton_;
 	}
 };
