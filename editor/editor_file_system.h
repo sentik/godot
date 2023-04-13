@@ -47,10 +47,13 @@ class EditorFileSystemDirectory : public Object {
 	GDCLASS(EditorFileSystemDirectory, Object);
 
 	String name;
+	String full_path;
+
 	uint64_t modified_time;
 	bool verified = false; //used for checking changes
 
 	EditorFileSystemDirectory *parent = nullptr;
+	Mutex sub_dirs_mutex;
 	LocalVector<EditorFileSystemDirectory *> subdirs;
 
 	struct FileInfo {
@@ -79,10 +82,38 @@ class EditorFileSystemDirectory : public Object {
 	void sort_files();
 
 	LocalVector<FileInfo *> files;
+	HashMap<String, FileInfo *> files_hash_map;
 
 	static void _bind_methods();
 
 	friend class EditorFileSystem;
+
+public:
+	void remove_file(const String& p_file_name) {
+		const auto idx = find_file_index(p_file_name);
+		const auto file_info = files[idx];
+		memdelete(file_info);
+
+		files.remove_at(idx);
+
+		const auto itter = files_hash_map.find(p_file_name);
+		if (itter) {
+			files_hash_map.remove(itter);
+		}
+	}
+
+	void add_file(FileInfo* file) {
+		files.push_back(file);
+		files_hash_map.insert(file->file, file);
+	}
+
+	FileInfo* get_file_by_name(const String &file_name) {
+		const auto result = files_hash_map.find(file_name);
+		if (result) {
+			return result->value;
+		}
+		return nullptr;
+	}
 
 public:
 	String get_name();
@@ -93,6 +124,7 @@ public:
 	int get_file_count() const;
 	String get_file(int p_idx) const;
 	String get_file_path(int p_idx) const;
+	String get_full_file_path(const String& p_file_name) const;
 	StringName get_file_type(int p_idx) const;
 	StringName get_file_resource_script_class(int p_idx) const;
 	Vector<String> get_file_deps(int p_idx) const;
@@ -236,11 +268,20 @@ class EditorFileSystem : public Node {
 		Ref<DirAccess> Directory;
 		LocalVector<EditorFileSystemDirectory::FileInfo*>* Files;
 	};
+	 
+	struct ScanSubDirectoriesInDirectory {
+		const ScanProgress *scan_progress;
+		Vector<String>* directories;
+		String parent_dir_access_path;
+		EditorFileSystemDirectory *p_dir;
+		Ref<DirAccess> da;
+	};
 
 
 	Mutex scan_new_dir_mutex;
 	void _scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAccess> &p_parent_dir_access, const ScanProgress &p_progress);
 	void _scan_new_dir_files(uint32_t p_index, const ScanFilesInDirectory *context);
+	void _scan_new_dir_sub_directory(uint32_t p_index, ScanSubDirectoriesInDirectory *context);
 
 	Thread thread_sources;
 	bool scanning_changes = false;

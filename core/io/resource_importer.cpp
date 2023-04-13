@@ -57,24 +57,18 @@ Error ResourceFormatImporter::_get_path_and_type(const String &p_path, PathAndTy
 		}
 	}
 
-
+	Variant::construct_from_string(editor_asset->metadata, r_path_and_type.metadata);
 	r_path_and_type.type = ClassDB::get_compatibility_remapped_class(editor_asset->resource_type);
 	r_path_and_type.uid = editor_asset->uid;
 	r_path_and_type.group_file = editor_asset->group_file;
-	r_path_and_type.metadata = editor_asset->metadata;
 	r_path_and_type.importer = editor_asset->importer_name;
 	if (r_valid) {
 		*r_valid = editor_asset->is_valid;
 	}
 
-	String assign;
-	Variant value;
-	VariantParser::Tag next_tag;
-
 	if (r_valid) {
 		*r_valid = true;
 	}
-
 
 #ifdef TOOLS_ENABLED
 	if (r_path_and_type.metadata && !r_path_and_type.path.is_empty()) {
@@ -100,7 +94,7 @@ Ref<Resource> ResourceFormatImporter::load(const String &p_path, const String &p
 			*r_error = err;
 		}
 
-		return Ref<Resource>();
+		return {};
 	}
 
 	Ref<Resource> res = ResourceLoader::_load(pat.path, p_path, pat.type, p_cache_mode, r_error, p_use_sub_threads, r_progress);
@@ -235,7 +229,7 @@ String ResourceFormatImporter::get_internal_resource_path(const String &p_path) 
 	Error err = _get_path_and_type(p_path, pat);
 
 	if (err != OK) {
-		return String();
+		return {};
 	}
 
 	return pat.path;
@@ -254,10 +248,11 @@ void ResourceFormatImporter::get_internal_resource_path_list(const String &p_pat
 }
 
 String ResourceFormatImporter::get_import_group_file(const String &p_path) const {
-	bool valid = true;
-	PathAndType pat;
-	_get_path_and_type(p_path, pat, &valid);
-	return valid ? pat.group_file : String();
+	const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path);
+	if (editor_asset.has_value()) {
+		return editor_asset->group_file;
+	}
+	return {};
 }
 
 bool ResourceFormatImporter::is_import_valid(const String &p_path) const {
@@ -268,36 +263,31 @@ bool ResourceFormatImporter::is_import_valid(const String &p_path) const {
 }
 
 String ResourceFormatImporter::get_resource_type(const String &p_path) const {
-	PathAndType pat;
-	Error err = _get_path_and_type(p_path, pat);
-
-	if (err != OK) {
-		return "";
+	const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path);
+	if (editor_asset.has_value()) {
+		return ClassDB::get_compatibility_remapped_class(editor_asset->resource_type);
 	}
 
-	return pat.type;
+	return {};
 }
 
 ResourceUID::ID ResourceFormatImporter::get_resource_uid(const String &p_path) const {
-	PathAndType pat;
-	Error err = _get_path_and_type(p_path, pat);
-
-	if (err != OK) {
-		return ResourceUID::INVALID_ID;
+	const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path);
+	if (editor_asset.has_value()) {
+		return editor_asset->uid;
 	}
-
-	return pat.uid;
+	return ResourceUID::INVALID_ID;
 }
 
 Variant ResourceFormatImporter::get_resource_metadata(const String &p_path) const {
-	PathAndType pat;
-	Error err = _get_path_and_type(p_path, pat);
-
-	if (err != OK) {
-		return Variant();
+	const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(p_path);
+	if (editor_asset.has_value()) {
+		Variant metadata;
+		Variant::construct_from_string(editor_asset->metadata, metadata);
+		return metadata;
 	}
 
-	return pat.metadata;
+	return {};
 }
 void ResourceFormatImporter::get_classes_used(const String &p_path, HashSet<StringName> *r_classes) {
 	PathAndType pat;
@@ -323,7 +313,7 @@ void ResourceFormatImporter::get_dependencies(const String &p_path, List<String>
 
 Ref<ResourceImporter> ResourceFormatImporter::get_importer_by_name(const String &p_name) const {
 	if (p_name.is_empty()) {
-		return Ref<ResourceImporter>();
+		return {};
 	}
 
 	const auto importer = importers_map.getptr(p_name);
@@ -331,7 +321,7 @@ Ref<ResourceImporter> ResourceFormatImporter::get_importer_by_name(const String 
 		return *importer;
 	}
 
-	return Ref<ResourceImporter>();
+	return {};
 }
 
 void ResourceFormatImporter::get_importers_for_extension(const String &p_extension, List<Ref<ResourceImporter>> *r_importers) {

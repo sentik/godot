@@ -151,6 +151,7 @@ struct EditorAssetFile {
 			sqlite_orm::make_column("source_file", &EditorAsset::source_file),
 			sqlite_orm::make_column("group_file", &EditorAsset::group_file),
 			sqlite_orm::make_column("modified_time", &EditorAsset::modified_time),
+			sqlite_orm::make_column("metadata", &EditorAsset::metadata),
 			sqlite_orm::make_column("import_modified_time", &EditorAsset::import_modified_time));
 }
 

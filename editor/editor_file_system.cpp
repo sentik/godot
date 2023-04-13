@@ -120,6 +120,10 @@ String EditorFileSystemDirectory::get_file_path(int p_idx) const {
 	return "res://" + file;
 }
 
+String EditorFileSystemDirectory::get_full_file_path(const String &p_file_name) const {
+	return full_path.path_join(p_file_name);
+}
+
 Vector<String> EditorFileSystemDirectory::get_file_deps(int p_idx) const {
 	ERR_FAIL_INDEX_V(p_idx, files.size(), Vector<String>());
 	Vector<String> deps;
@@ -206,6 +210,7 @@ EditorFileSystemDirectory::EditorFileSystemDirectory() {
 	parent = nullptr;
 	files.reserve(32);
 	subdirs.reserve(32);
+	files_hash_map.reserve(32);
 }
 
 EditorFileSystemDirectory::~EditorFileSystemDirectory() {
@@ -362,17 +367,18 @@ void EditorFileSystem::_scan_filesystem_thread_func(void *_userdata) {
 	sd->_scan_filesystem();
 }
 
+#pragma optimize("", off)
 bool EditorFileSystem::_test_for_reimport(const String &p_path, bool p_only_imported_files) {
 	if (!reimport_on_missing_imported_files && p_only_imported_files) {
 		return false;
 	}
 
-	const auto editor_asset = file_system_db->asset_get(p_path);
+	const auto editor_asset = file_system_db->asset_get(p_path).value_or(EditorAsset());
 	if (!editor_asset.has_value()) {
 		return true;
 	}
 
-	if (editor_asset->importer_name == "keep") {
+	if (editor_asset.importer_name == "keep") {
 		return false; //keep mode, do not reimport
 	}
 	
@@ -381,16 +387,16 @@ bool EditorFileSystem::_test_for_reimport(const String &p_path, bool p_only_impo
 		return true;
 	}
 
-	Ref<ResourceImporter> importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(editor_asset->importer_name);
+	Ref<ResourceImporter> importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(editor_asset.importer_name);
 	if (importer.is_null()) {
 		return true; // the importer has possibly changed, try to reimport.
 	}
 
-	if (importer->get_format_version() > editor_asset->importer_version) {
+	if (importer->get_format_version() > editor_asset.importer_version) {
 		return true; // version changed, reimport
 	}
 
-	const auto editor_asset_files = file_system_db->asset_files_get(editor_asset->asset_id);
+	const auto editor_asset_files = file_system_db->asset_files_get(editor_asset.asset_id);
 
 	//imported files are gone, reimport
 	for (const auto &file : editor_asset_files) {
@@ -401,21 +407,28 @@ bool EditorFileSystem::_test_for_reimport(const String &p_path, bool p_only_impo
 
 	//check source md5 matching
 	if (!p_only_imported_files) {
-		if (!editor_asset->source_file.is_empty() && editor_asset->source_file != p_path) {
+		const auto was_file_moved = !editor_asset.source_file.is_empty() && editor_asset.source_file != p_path;
+		if (was_file_moved) {
 			return true; //file was moved, reimport
 		}
-	
-		if (editor_asset->source_md5.is_empty()) {
+
+		const auto was_hash_lacked = editor_asset.source_md5.is_empty();
+		if (was_hash_lacked) {
 			return true; //lacks md5, so just reimport
 		}
 
-		if (auto md5 = FileAccess::get_md5(p_path); md5 != editor_asset->source_md5) {
+		const auto file_hash = FileAccess::get_md5(p_path);
+		const auto is_file_hash_equal = file_hash == editor_asset.source_md5;
+		if (!is_file_hash_equal) {
 			return true;
 		}
 
 		for (const auto &file : editor_asset_files)
 		{
-			if (auto md5 = FileAccess::get_md5(file.path); md5 != file.hash) {
+			const auto asset_file_hash = FileAccess::get_md5(file.path);
+			const auto is_asset_file_hash_equal = asset_file_hash == file.hash;
+
+			if (!is_asset_file_hash_equal) {
 				return true;
 			}
 		}
@@ -498,45 +511,30 @@ bool EditorFileSystem::_update_scan_actions() {
 				fs_changed = true;
 			} break;
 			case ItemAction::ACTION_FILE_ADD: {
-				int idx = 0;
-				for (int i = 0; i < ia.dir->files.size(); i++) {
-					if (ia.new_file->file.naturalnocasecmp_to(ia.dir->files[i]->file) < 0) {
-						break;
-					}
-					idx++;
-				}
-				if (idx == ia.dir->files.size()) {
-					ia.dir->files.push_back(ia.new_file);
-				} else {
-					ia.dir->files.insert(idx, ia.new_file);
-				}
+				ia.dir->add_file(ia.new_file);
 
 				fs_changed = true;
 
 				if (ClassDB::is_parent_class(ia.new_file->type, SNAME("Script"))) {
-					_queue_update_script_class(ia.dir->get_file_path(idx));
+					_queue_update_script_class(ia.dir->get_full_file_path(ia.file));
 				}
 
 			} break;
 			case ItemAction::ACTION_FILE_REMOVE: {
-				int idx = ia.dir->find_file_index(ia.file);
-				ERR_CONTINUE(idx == -1);
+				const auto file_info = ia.dir->get_file_by_name(ia.file);
 
-				if (ClassDB::is_parent_class(ia.dir->files[idx]->type, SNAME("Script"))) {
-					_queue_update_script_class(ia.dir->get_file_path(idx));
+				if (ClassDB::is_parent_class(file_info->type, SNAME("Script"))) {
+					_queue_update_script_class(ia.dir->get_full_file_path(ia.file));
 				}
 
-				_delete_internal_files(ia.dir->files[idx]->file);
-				memdelete(ia.dir->files[idx]);
-				ia.dir->files.remove_at(idx);
-
+				_delete_internal_files(file_info->file);
+				ia.dir->remove_file(ia.file);
 				fs_changed = true;
 
 			} break;
 			case ItemAction::ACTION_FILE_TEST_REIMPORT: {
-				int idx = ia.dir->find_file_index(ia.file);
-				ERR_CONTINUE(idx == -1);
-				String full_path = ia.dir->get_file_path(idx);
+				String full_path = ia.dir->full_path.path_join(ia.file);
+
 				if (_test_for_reimport(full_path, false)) {
 					//must reimport
 					reimports.push_back(full_path);
@@ -549,19 +547,19 @@ bool EditorFileSystem::_update_scan_actions() {
 				} else {
 					//must not reimport, all was good
 					//update modified times, to avoid reimport
-					ia.dir->files[idx]->modified_time = FileAccess::get_modified_time(full_path);
-					//ia.dir->files[idx]->import_modified_time = FileAccess::get_modified_time(full_path + ".import");
-					ia.dir->files[idx]->import_modified_time = ia.dir->files[idx]->modified_time;
+					const auto file_info = ia.dir->get_file_by_name(ia.file);
+					const auto editor_asset = EditorFileSystemDb::get_singleton()->asset_get(full_path);
+					file_info->modified_time = FileAccess::get_modified_time(full_path);
+					file_info->import_modified_time = editor_asset->import_modified_time;
 				}
 
 				fs_changed = true;
 			} break;
 			case ItemAction::ACTION_FILE_RELOAD: {
-				int idx = ia.dir->find_file_index(ia.file);
-				ERR_CONTINUE(idx == -1);
-				String full_path = ia.dir->get_file_path(idx);
+				const auto full_path = ia.dir->get_full_file_path(ia.file);
+				const auto file_info = ia.dir->get_file_by_name(ia.file);
 
-				if (ClassDB::is_parent_class(ia.dir->files[idx]->type, SNAME("Script"))) {
+				if (ClassDB::is_parent_class(file_info->type, SNAME("Script"))) {
 					_queue_update_script_class(full_path);
 				}
 
@@ -649,16 +647,16 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 	Vector<String> dirs;
 	Vector<String> files;
 
-	auto da = p_parent_dir_access;
 	String parent_dir_access_path = p_parent_dir_access->get_current_dir();
+	Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
+	da->change_dir(parent_dir_access_path);
 
-	
 	p_dir->modified_time = FileAccess::get_modified_time(parent_dir_access_path);
 
 	da->list_dir_begin();
 	while (true) {
-		String f = da->get_next();
-		if (f.is_empty()) {
+		String path = da->get_next();
+		if (path.is_empty()) {
 			break;
 		}
 
@@ -667,18 +665,19 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 		}
 
 		if (da->current_is_dir()) {
-			if (f.begins_with(".")) { // Ignore special and . / ..
+			if (path.begins_with(".")) { // Ignore special and . / ..
 				continue;
 			}
 
-			if (_should_skip_directory(parent_dir_access_path.path_join(f))) {
+			const auto sub_path = parent_dir_access_path.path_join(path);
+			if (_should_skip_directory(sub_path)) {
 				continue;
 			}
 
-			dirs.push_back(f);
+			dirs.push_back(path);
 
 		} else {
-			files.push_back(f);
+			files.push_back(path);
 		}
 	}
 
@@ -687,43 +686,24 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 	dirs.sort_custom<NaturalNoCaseComparator>();
 	files.sort_custom<NaturalNoCaseComparator>();
 
-	int total = dirs.size() + files.size();
-	int idx = 0;
+	{
+		ScanSubDirectoriesInDirectory data;
+		data.scan_progress = &p_progress;
+		data.p_dir = p_dir;
+		data.da = da;
+		data.directories = &dirs;
+		data.parent_dir_access_path = parent_dir_access_path;
 
-	for (const auto E: dirs) {
-		if (da->change_dir(E) == OK) {
-			String d = da->get_current_dir();
+		WorkerThreadPool::GroupID group_task = WorkerThreadPool::get_singleton()->add_template_group_task(
+				this, &EditorFileSystem::_scan_new_dir_sub_directory,
+				&data,
+				data.directories->size(),
+				64,
+				false,
+				vformat(TTR("Scan directory %s for sub dirs & files"), parent_dir_access_path)
+		);
 
-			if (d == parent_dir_access_path || !d.begins_with(parent_dir_access_path)) {
-				da->change_dir(parent_dir_access_path); //avoid recursion
-			} else {
-				EditorFileSystemDirectory *efd = memnew(EditorFileSystemDirectory);
-
-				efd->parent = p_dir;
-				efd->name = E;
-
-				_scan_new_dir(efd, da, p_progress.get_sub(idx, total));
-
-				int idx2 = 0;
-				for (int i = 0; i < p_dir->subdirs.size(); i++) {
-					if (efd->name.naturalnocasecmp_to(p_dir->subdirs[i]->name) < 0) {
-						break;
-					}
-					idx2++;
-				}
-				if (idx2 == p_dir->subdirs.size()) {
-					p_dir->subdirs.push_back(efd);
-				} else {
-					p_dir->subdirs.insert(idx2, efd);
-				}
-
-				da->change_dir("..");
-			}
-		} else {
-			ERR_PRINT("Cannot go into subdir '" + E + "'.");
-		}
-
-		p_progress.update(idx, total);
+		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(group_task);
 	}
 
 	for (const auto E : files) {
@@ -734,7 +714,7 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 
 		EditorFileSystemDirectory::FileInfo *fi = memnew(EditorFileSystemDirectory::FileInfo);
 		fi->file = E;
-		p_dir->files.push_back(fi);
+		p_dir->add_file(fi);
 	}
 
 	if (p_dir->files.size() > 0) {
@@ -764,6 +744,39 @@ void EditorFileSystem::_scan_new_dir(EditorFileSystemDirectory *p_dir, Ref<DirAc
 		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(group_task);
 	}
 }
+
+
+void EditorFileSystem::_scan_new_dir_sub_directory(uint32_t p_index, ScanSubDirectoriesInDirectory *context) {
+	const auto &parent_dir_access_path = context->parent_dir_access_path;
+	const auto sub_directory_name = context->directories->operator[](p_index);
+	const auto sub_directory_path = parent_dir_access_path.path_join(sub_directory_name);
+
+	Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_RESOURCES);
+	da->change_dir(sub_directory_path);
+
+	if (da->change_dir(sub_directory_path) == OK) {
+		if (sub_directory_path == parent_dir_access_path || !sub_directory_path.begins_with(parent_dir_access_path)) {
+			context->da->change_dir(parent_dir_access_path); //avoid recursion
+		}
+		else
+		{
+			EditorFileSystemDirectory *efd = memnew(EditorFileSystemDirectory);
+
+			efd->parent = context->p_dir;
+			efd->name = sub_directory_name;
+			efd->full_path = sub_directory_path;
+
+			_scan_new_dir(efd, da, *context->scan_progress);
+			context->p_dir->sub_dirs_mutex.lock();
+			context->p_dir->subdirs.push_back(efd);
+			context->p_dir->sub_dirs_mutex.unlock();
+		}
+	} else {
+		ERR_PRINT("Cannot go into subdir '" + sub_directory_path + "'.");
+	}
+	
+}
+
 
 void EditorFileSystem::_scan_new_dir_files(uint32_t p_index, const ScanFilesInDirectory *context) {
 	auto files = context->Files;
@@ -921,7 +934,8 @@ void EditorFileSystem::_scan_fs_changes(EditorFileSystemDirectory *p_dir, const 
 
 				int idx = p_dir->find_dir_index(f);
 				if (idx == -1) {
-					if (_should_skip_directory(cd.path_join(f))) {
+					const auto full_path = cd.path_join(f); 
+					if (_should_skip_directory(full_path)) {
 						continue;
 					}
 
@@ -929,8 +943,10 @@ void EditorFileSystem::_scan_fs_changes(EditorFileSystemDirectory *p_dir, const 
 
 					efd->parent = p_dir;
 					efd->name = f;
+					efd->full_path = full_path;
 					Ref<DirAccess> d = DirAccess::create(DirAccess::ACCESS_RESOURCES);
-					d->change_dir(cd.path_join(f));
+					d->change_dir(full_path);
+
 					_scan_new_dir(efd, d, p_progress.get_sub(1, 1));
 
 					ItemAction ia;
@@ -1545,8 +1561,7 @@ void EditorFileSystem::update_file(const String &p_file) {
 				_queue_update_script_class(p_file);
 			}
 
-			memdelete(fs->files[cpos]);
-			fs->files.remove_at(cpos);
+			fs->remove_file(p_file);
 		}
 
 		_update_pending_script_classes();
@@ -1826,18 +1841,25 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 	//try to obtain existing params
 
 	HashMap<StringName, Variant> params = p_custom_options;
-	String importer_name; //empty by default though
-
-	if (!p_custom_importer.is_empty()) {
-		importer_name = p_custom_importer;
-	}
-
 	auto editor_asset = file_system_db->asset_get(p_file).value_or(EditorAsset());
+	std::vector<EditorAssetParam> editor_asset_params;
+
 	if (editor_asset.has_value()) {
-		importer_name = editor_asset.importer_name;
+		editor_asset_params = file_system_db->asset_params_get(editor_asset.asset_id);
+
+		for (const auto& asset_param : editor_asset_params) {
+			if (!params.has(asset_param.key)) {
+				params[asset_param.key] = asset_param.value;
+			}
+		}
+
 	} else {
 		editor_asset.uid = ResourceUID::get_singleton()->create_id();
 		editor_asset.import_modified_time = std::time(nullptr);
+
+		if (!p_custom_importer.is_empty()) {
+			editor_asset.importer_name = p_custom_importer;
+		}
 	}
 		
 	if (editor_asset.has_value() && editor_asset.importer_name == "keep") {
@@ -1851,17 +1873,16 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 		return OK;
 	}
 
-
 	Ref<ResourceImporter> importer;
 	bool load_default = false;
 	//find the importer
-	importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(importer_name);
+	importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(editor_asset.importer_name);
 	if (importer.is_null()) {
 		//not found by name, find by extension
 		importer = ResourceFormatImporter::get_singleton()->get_importer_by_extension(p_file.get_extension());
 		load_default = true;
 		if (importer.is_null()) {
-			ERR_FAIL_V_MSG(ERR_FILE_CANT_OPEN, "BUG: File queued for import, but can't be imported, importer for type '" + importer_name + "' not found.");
+			ERR_FAIL_V_MSG(ERR_FILE_CANT_OPEN, "BUG: File queued for import, but can't be imported, importer for type '" + editor_asset.importer_name + "' not found.");
 		}
 	}
 
@@ -1906,7 +1927,7 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 		editor_asset.importer_version = importer->get_format_version();
 		editor_asset.resource_type = importer->get_resource_type();
 		editor_asset.is_valid = err == OK;
-		editor_asset.source_file = Variant(p_file).get_construct_string();
+		editor_asset.source_file = p_file;
 		editor_asset.source_md5 = FileAccess::get_md5(p_file);
 
 		if (p_generator_parameters) {
@@ -1917,7 +1938,6 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 			editor_asset.metadata = meta.get_construct_string();
 		}
 
-		std::vector<EditorAssetParam> editor_asset_params;
 		std::vector<EditorAssetFile> editor_asset_files;
 
 		if (err == OK) {
@@ -1954,18 +1974,19 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 		}
 
 		//store options in provided order, to avoid file changing. Order is also important because first match is accepted first.
-		editor_asset_params.reserve(opts.size());
+		std::vector<EditorAssetParam> editor_asset_params_for_save;
+		editor_asset_params_for_save.reserve(opts.size());
 
 		for (const ResourceImporter::ImportOption &E : opts) {
 			EditorAssetParam param;
 			param.key = E.option.name;
 			param.value = params[param.key];
-			editor_asset_params.push_back(param);
+			editor_asset_params_for_save.push_back(param);
 		}
 
 		file_system_db->asset_add_or_update(editor_asset);
 		file_system_db->asset_files_replace(editor_asset.asset_id, editor_asset_files);
-		file_system_db->asset_params_replace(editor_asset.asset_id, editor_asset_params);
+		file_system_db->asset_params_replace(editor_asset.asset_id, editor_asset_params_for_save);
 	}
 	
 	//update modified times, to avoid reimport

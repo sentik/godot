@@ -3634,7 +3634,16 @@ void Variant::_variant_call_error(const String &p_method, Callable::CallError &e
 }
 
 void Variant::construct_from_string(const String &p_string, Variant &r_value, ObjectConstruct p_obj_construct, void *p_construct_ud) {
-	r_value = Variant();
+
+	int err_line = -1;
+	String error_str;
+	VariantParser::StreamString stream;
+	stream.s = p_string;
+		
+	auto err = VariantParser::parse(&stream, r_value, error_str, err_line);
+	if (err != OK) {
+		ERR_PRINT("Failed construct_from_string | error: " + error_str + " | line: " + itos(err_line) + " | data: " + p_string);
+	}
 }
 
 String Variant::get_construct_string() const {
